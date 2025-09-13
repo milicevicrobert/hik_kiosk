@@ -302,4 +302,4 @@ ui.add_head_html('''
 ''')
 
 # ------------------ APPLICATION STARTUP ------------------
-ui.run(title="Alarm Kiosk", reload=True, dark=True)
+ui.run(title="Alarm Kiosk", reload=False, dark=True, port=8080)

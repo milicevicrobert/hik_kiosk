@@ -159,3 +159,86 @@ cd app/niceGui && python main_kiosk.py        # Kiosk (http://localhost:8080)
 - **Samsung browser** kompatibilnost uključena
 - **Real-time** ažuriranje bez potrebe za ručnim osvježavanjem
 - **Responsive** design pokriva desktop, tablet i mobitel
+
+
+dodatak:
+
+NSSM SERVIS INSTALACIJA - DOM BUZIN KIOSK SISTEM
+=================================================
+
+PRIPREMA:
+---------
+1. Download NSSM sa https://nssm.cc/download
+2. Raspakiraj nssm.exe u C:\Tools\nssm\
+3. Dodaj C:\Tools\nssm u PATH varijablu
+4. Restartaj Command Prompt
+5. Testiraj: nssm
+
+INSTALACIJA SERVISA:
+--------------------
+Otvori Command Prompt kao Administrator i idi u projekt folder:
+cd c:\Users\milic\dev\py\kiosk_hik
+
+1. KIOSK SERVIS (NiceGUI aplikacija):
+   nssm install KioskService "%cd%\kiosk.bat"
+   nssm set KioskService DisplayName "Dom Buzin - Kiosk"
+   nssm set KioskService Description "Alarm Kiosk aplikacija za tablet"
+   nssm set KioskService Start SERVICE_AUTO_START
+   nssm set KioskService AppDirectory "%cd%"
+   nssm set KioskService AppExit Default Restart
+   nssm set KioskService AppRestartDelay 10000
+
+2. ADMIN SERVIS (Streamlit aplikacija):
+   nssm install AdminService "%cd%\admin.bat"
+   nssm set AdminService DisplayName "Dom Buzin - Admin"
+   nssm set AdminService Description "Admin panel za upravljanje alarmima"
+   nssm set AdminService Start SERVICE_AUTO_START
+   nssm set AdminService AppDirectory "%cd%"
+   nssm set AdminService AppExit Default Restart
+   nssm set AdminService AppRestartDelay 10000
+
+3. AXPRO SERVIS (Alarm scanner):
+   nssm install AxproService "%cd%\axpro.bat"
+   nssm set AxproService DisplayName "Dom Buzin - AxPro Scanner"
+   nssm set AxproService Description "AxPro alarm scanner servis"
+   nssm set AxproService Start SERVICE_AUTO_START
+   nssm set AxproService AppDirectory "%cd%"
+   nssm set AxproService AppExit Default Restart
+   nssm set AxproService AppRestartDelay 10000
+
+POKRETANJE SERVISA:
+-------------------
+net start KioskService
+net start AdminService
+net start AxproService
+
+ZAUSTAVLJANJE SERVISA:
+----------------------
+net stop KioskService
+net stop AdminService
+net stop AxproService
+
+PROVJERA STATUSA:
+-----------------
+sc query KioskService
+sc query AdminService
+sc query AxproService
+
+UKLANJANJE SERVISA:
+-------------------
+net stop KioskService && nssm remove KioskService confirm
+net stop AdminService && nssm remove AdminService confirm
+net stop AxproService && nssm remove AxproService confirm
+
+KORISNI PORTOVI:
+----------------
+- Kiosk aplikacija: http://localhost:8080
+- Admin panel: http://localhost:8501
+- AxPro scanner: background servis (nema web interface)
+
+NAPOMENE:
+---------
+- Svi servisi se automatski pokreću pri boot-u računala
+- U slučaju crash-a, servisi se restartaju nakon 10 sekundi
+- Logovi se mogu vidjeti u Windows Event Viewer
+- Za promjene u kodu, restartaj odgovarajući servis
