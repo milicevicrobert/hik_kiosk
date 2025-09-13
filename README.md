@@ -9,8 +9,8 @@ kiosk_hik/
 ├── app/
 │   ├── admin_app.py              # Streamlit glavna aplikacija (admin sučelje)
 │   ├── axpro/                    # HIKVision AX PRO integracija
-│   │   ├── alarm_scaner.py       # Čitanje alarma iz HIKVision
-│   │   ├── alarm_scaner_sim.py   # Simulacija za testiranje
+│   │   ├── alarm_scaner.py       # 🏭 PRODUCTION - Čita alarme iz AX PRO
+│   │   ├── alarm_scaner_sim.py   # 🧪 SIMULATOR - Generira test alarme
 │   │   ├── axpro_auth.py         # Autentifikacija s AX PRO
 │   │   ├── ax_config.py          # Konfiguracija AX PRO
 │   │   ├── db.py                 # Database operacije
@@ -35,22 +35,31 @@ kiosk_hik/
 │       ├── *.mp3, *.b64          # Audio datoteke
 │       └── logo.png, logo.svg    # Logotipovi
 ├── requirements.txt              # Python dependencies
-└── stert_kiosk_niceGui.bat      # Windows batch za pokretanje
+└── README.md                     # Ova dokumentacija
 ```
 
 ## 🚀 Kako pokrenuti
 
-### 1. Kiosk (tablet sučelje)
-```bash
-cd app/niceGui
-python main_kiosk.py
-```
-**Ili koristite:** `stert_kiosk_niceGui.bat`
-
-### 2. Admin sučelje (Streamlit)
+### 🖥️ **Admin Control Center** (PREPORUČENO)
 ```bash
 cd app
-streamlit run admin_app.py
+streamlit run admin_app.py   # Admin na http://localhost:8501
+```
+**Zatim:**
+- Idite na stranicu **"B_Service_Management"**
+- Odaberite **"🏭 Production Mode"** (s AX PRO centralom)
+- Ili **"🧪 Development Mode"** (simulacija bez centrale)
+- Sve se pokreće automatski jednim klikom!
+
+### 🔧 **Ručno pokretanje** (opcionalno)
+```bash
+# Production (s HIKVision centralom)
+cd app/axpro && python alarm_scaner.py        # AX PRO Scanner
+cd app/niceGui && python main_kiosk.py        # Kiosk (http://localhost:8080)
+
+# Development (simulacija)  
+cd app/axpro && python alarm_scaner_sim.py    # Simulator
+cd app/niceGui && python main_kiosk.py        # Kiosk (http://localhost:8080)
 ```
 
 ## 🔧 Glavne komponente
@@ -65,16 +74,20 @@ streamlit run admin_app.py
 - **Optimiziran za**: Samsung tableti, landscape orijentacija
 
 ### 🖥️ **ADMIN** (`admin_app.py` + `pages/`)
-- **Svrha**: Web admin za upravljanje sustavom
+- **Svrha**: Web admin za upravljanje cijeli sustavom
 - **Stranice**:
+  - **A_System_Status.py**: 📊 Real-time monitoring servisa
+  - **B_Service_Management.py**: 🚀 Pokretanje/zaustavljanje servisa  
   - **4_Pregled.py**: Aktivni alarmi
-  - **7_Alarmi.py**: 📊 **NOVA** - Filtracija i pregled svih alarma
+  - **7_Alarmi.py**: 📊 Filtracija i pregled svih alarma
   - **5_osoblje.py**: Upravljanje osobljem (PIN kodovi)
   - **6_korisnici.py**: Upravljanje korisnicima
   - **7_zone.py**: Konfiguracija zona
+  - **9_Database.py**: Database management
 
 ### 🔌 **INTEGRACIJA** (`axpro/`)
-- **alarm_scaner.py**: Čita alarme iz HIKVision AX PRO sustava
+- **alarm_scaner.py**: 🏭 **PRODUCTION** - Čita alarme iz HIKVision AX PRO sustava
+- **alarm_scaner_sim.py**: 🧪 **DEVELOPMENT** - Simulira alarme kad nema AX PRO centrale
 - **axpro_auth.py**: Autentifikacija s HIKVision API
 - **db.py**: SQLite operacije (alarmi, korisnici, osoblje, zone)
 
@@ -90,12 +103,13 @@ streamlit run admin_app.py
 ## 🎯 Ključne značajke
 
 ### ✅ **Dodano u zadnjim izmjenama:**
-- 📊 **7_Alarmi.py** - Nova stranica za filtraciju alarma po:
-  - Korisniku, osoblju, datumu
-  - Prikaz broja rezultata
-  - Sigurno brisanje starih alarma
+- � **Service Management** - Pokretanje svih servisa iz admin sučelja
+- 📊 **Real-time System Status** - A_System_Status.py za monitoring
+- 💓 **Heartbeat Monitoring** - Automatska provjera rada servisa
+- 📊 **7_Alarmi.py** - Filtracija alarma po korisniku, osoblju, datumu
 - 📱 **Mobilna optimizacija** - Tailwind responsive klase
 - 🔄 **Performanse** - Lokalni timer umjesto punog osvježavanja
+- 🗃️ **Database Management** - Kreiranje i održavanje baze preko admin sučelja
 
 ### 🛠️ **Konfiguracijski fileovi:**
 - `nice_config.py` - NiceGUI postavke (DB path, sound path)
@@ -103,13 +117,45 @@ streamlit run admin_app.py
 
 ## 🔧 Deployment
 
-1. **Windows server/PC**: Koristite `.bat` datoteku
-2. **Tablet kiosk**: Otvorite browser na `http://server:8080`
-3. **Admin pristup**: Otvorite `http://server:8501`
+### 🖥️ **Jednostavno pokretanje**
+1. **Otvorite Admin Control Center**: `streamlit run admin_app.py`
+2. **Service Management stranica** → Odaberite mode:
+   - **🏭 Production**: HIKVision AX PRO + Kiosk
+   - **🧪 Development**: Simulator + Kiosk  
+3. **Kiosk dostupan na**: `http://localhost:8080`
+4. **Real-time monitoring**: A_System_Status stranica
+
+### 🏭 **Production Environment**  
+- **Windows server s HIKVision AX PRO mrežnim pristupom**
+- **Admin Control Center** → Production Mode
+- **Automatski heartbeat monitoring**
+
+### 🧪 **Development Environment**
+- **Lokalni PC bez HIKVision centrale**  
+- **Admin Control Center** → Development Mode
+- **Simulator** automatski generira test alarme
 
 ## 📝 Napomene
 
-- **Kiosk** je optimiziran za **landscape** prikaz na tabletima
+### 🏭 **Production (s HIKVision AX PRO)**
+- **alarm_scaner.py** čita prave alarme iz centrale
+- **Real-time** komunikacija s HIKVision API
+- **Network dependency** - trebate pristup AX PRO centrali
+
+### 🧪 **Development (simulator)**
+- **alarm_scaner_sim.py** generira test alarme
+- **Offline rad** - ne treba HIKVision centrala
+- **Kontrolirano testiranje** - možete simulirati različite scenarije
+
+### 📱 **Admin optimizacije**
+- **Service Management** - Pokretanje servisa jednim klikom
+- **Real-time monitoring** - Live status svih komponenti  
+- **Heartbeat tracking** - Automatska provjera rada servisa
+- **Quick Start modes** - Production vs Development mode
+- **Database management** - Kreiranje i održavanje baze
+
+### 📱 **Kiosk optimizacije**
+- **Landscape** prikaz optimiziran za tablete
 - **Samsung browser** kompatibilnost uključena
 - **Real-time** ažuriranje bez potrebe za ručnim osvježavanjem
 - **Responsive** design pokriva desktop, tablet i mobitel

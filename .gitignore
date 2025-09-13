@@ -1,0 +1,15 @@
+# Development artifacts
+app/_deprecated/
+app/__pycache__/
+app/*/__pycache__/
+*.pyc
+*.pyo
+*.db-journal
+
+# IDE files
+.vscode/settings.json
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

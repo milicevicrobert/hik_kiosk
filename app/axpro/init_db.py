@@ -4,13 +4,15 @@ import sqlite3
 REQUIRED_TABLES = {
     "osoblje": {"id", "ime", "sifra", "aktivna"},
     "korisnici": {"id", "ime", "soba"},
-    "zone": {"id", "naziv", "korisnik_id"},
+    "zone": {"id", "naziv", "korisnik_id", "grace_until"},
     "alarms": {
         "id", "zone_id", "zone_name", "vrijeme", "potvrda",
         "vrijemePotvrde", "korisnik", "soba", "osoblje"
     },
     "comm": {"key", "value"},
 }
+
+
 
 
 def table_has_columns(conn, table_name, required_columns):
@@ -22,17 +24,29 @@ def table_has_columns(conn, table_name, required_columns):
         return False
 
 
-def init_baza(db_file="data/alarmni_sustav.db"):
+def init_baza(db_file="data/alarmni_sustav.db", silent=False):
+    """Inicijaliziraj bazu podataka s potrebnim tablicama i kolonama
+    
+    Args:
+        db_file: Putanja do baze podataka
+        silent: Ako je True, neće ispisivati poruke u terminal
+    
+    Returns:
+        tuple: (success, updated_tables, message)
+    """
     os.makedirs(os.path.dirname(db_file), exist_ok=True)
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
 
     reinit_required = False
+    updated_tables = []
 
     for table_name, columns in REQUIRED_TABLES.items():
         if not table_has_columns(conn, table_name, columns):
-            print(f"🛠️ Stvaranje ili ažuriranje tablice: {table_name}")
+            if not silent:
+                print(f"🛠️ Stvaranje ili ažuriranje tablice: {table_name}")
             reinit_required = True
+            updated_tables.append(table_name)
 
             if table_name == "osoblje":
                 cursor.execute("""
@@ -58,9 +72,19 @@ def init_baza(db_file="data/alarmni_sustav.db"):
                 CREATE TABLE IF NOT EXISTS zone (
                     id INTEGER PRIMARY KEY,
                     naziv TEXT NOT NULL,
-                    korisnik_id INTEGER
+                    korisnik_id INTEGER,
+                    grace_until TIMESTAMP DEFAULT NULL
                 )
                 """)
+                
+                # Dodaj grace_until kolonu ako ne postoji u postojećoj tablici
+                try:
+                    cursor.execute("ALTER TABLE zone ADD COLUMN grace_until TIMESTAMP DEFAULT NULL")
+                    if not silent:
+                        print("  ✅ Dodana grace_until kolona u zone tablicu")
+                except sqlite3.OperationalError:
+                    # Kolona već postoji
+                    pass
 
             elif table_name == "alarms":
                 cursor.execute("""
@@ -92,10 +116,17 @@ def init_baza(db_file="data/alarmni_sustav.db"):
     conn.commit()
     conn.close()
 
+    # Return results instead of printing
     if reinit_required:
-        print(f"✅ Baza ažurirana ili kreirana: {db_file}")
+        message = f"Baza ažurirana ili kreirana: {db_file}"
+        if not silent:
+            print(f"✅ {message}")
+        return True, updated_tables, message
     else:
-        print(f"ℹ️ Sve tablice i kolone su već ispravne: {db_file}")
+        message = f"Sve tablice i kolone su već ispravne: {db_file}"
+        if not silent:
+            print(f"ℹ️ {message}")
+        return True, [], message
 
 
 if __name__ == "__main__":

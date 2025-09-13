@@ -17,6 +17,8 @@ def get_connection() -> sqlite3.Connection:
 def validan_pin(pin: str, duljina: int = 4) -> bool:
     return pin.isdigit() and len(pin) == duljina
 
+import time
+
 def set_comm_flag(key: str, value: int = 1):
     with get_connection() as conn:
         conn.execute("""
@@ -25,6 +27,11 @@ def set_comm_flag(key: str, value: int = 1):
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
         """, (key, value))
         conn.commit()
+
+def set_kiosk_heartbeat():
+    """Postavi heartbeat timestamp za monitoring"""
+    current_timestamp = int(time.time())
+    set_comm_flag("kiosk_heartbeat", current_timestamp)
 
 def get_zadnji_potvrdjeni_alarm_korisnika(korisnik: str) -> dict | None:
     with get_connection() as conn:
@@ -204,6 +211,10 @@ def main_page():
 
     def update_alarms():
         nonlocal last_alarm_ids, last_render_time
+        
+        # 💓 Postavi heartbeat za monitoring
+        set_kiosk_heartbeat()
+        
         df = get_aktivni_alarms()
         current_ids = set(df["id"].tolist())
         now = datetime.now()
