@@ -1,9 +1,9 @@
-@echo off
+echo pokrecem 
 
 if not exist "venv\Scripts\python.exe" exit /b 1
 
-cd /d "%~dp0app\streamlit"
+cd /d "%~dp0app\"
 
 if not exist "admin_app.py" exit /b 1
 
-..\..\venv\Scripts\python.exe -m streamlit run admin_app.py
+..\venv\Scripts\python.exe -m streamlit run admin_app.py

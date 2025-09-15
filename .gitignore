@@ -1,4 +1,5 @@
 # Development artifacts
+app/data/
 app/_deprecated/
 app/__pycache__/
 app/*/__pycache__/

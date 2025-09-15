@@ -11,6 +11,7 @@ RENDER_INTERVAL = timedelta(seconds=60)  # Minimum interval between full UI re-r
 
 # ------------------ HELPER FUNCTIONS ------------------
 def get_connection() -> sqlite3.Connection:
+  
     return sqlite3.connect(DB_PATH)
 
 def validan_pin(pin: str, duljina: int = 4) -> bool:
@@ -81,101 +82,103 @@ def potvrdi_alarm(alarm_id: int, osoblje_ime: str):
         """, (osoblje_ime, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), alarm_id))
         conn.commit()
 
-# ------------------ SOUND CONTROLLER FUNCTIONS ------------------
-sound_enabled = True
-audio_element = None
+# ------------------ ALARM DISPLAY CLASS ------------------
+class Alarm:
+    def __init__(self, row: dict, container):
 
-def init_sound(audio_path):
-    global audio_element
-    audio_element = ui.audio(audio_path).props('loop controls=false').classes('hidden')
+        self.id = row["id"]
+        self.zone_name = row["zone_name"]
+        self.korisnik = row["korisnik"] or "NEPOZNAT"
+        self.soba = row["soba"] or "N/A"
+        self.vrijeme = datetime.strptime(row["vrijeme"], "%Y-%m-%d %H:%M:%S")
+        self.container = container
 
-def play_sound():
-    global sound_enabled
-    if sound_enabled:
+    def prikazi(self):
+        """Render the alarm UI element."""
+        samo_vrijeme = self.vrijeme.strftime("%H:%M")
+        proteklo_teksta = f"{int((datetime.now() - self.vrijeme).total_seconds() // 60)} min"
+
+        with self.container:
+            with ui.expansion().classes('max-w-full border border-gray-300 rounded-lg sm:rounded-xl p-1 sm:p-2 w-full') as exp:
+                with exp.add_slot('header'):
+                    with ui.element('div').classes('grid grid-cols-[2fr_2fr_2fr_3fr] sm:grid-cols-[1fr_1fr_1fr_1.5fr] w-full gap-2 sm:gap-4 px-2 sm:px-4'):
+                        ui.label(f'🕒 {samo_vrijeme}').classes('text-sm sm:text-base lg:text-lg')
+                        ui.label(f'⏱️ {proteklo_teksta}').classes('text-sm sm:text-base lg:text-lg')
+                        ui.label(f'🛏️ {self.soba}').classes('text-sm sm:text-base lg:text-lg')
+                        ui.label(f'🧓 {self.korisnik}').classes('text-sm sm:text-base lg:text-lg')
+
+                # Show last confirmed alarm for this user if available
+                zadnji = get_zadnji_potvrdjeni_alarm_korisnika(self.korisnik)
+                with ui.row().classes('items-end justify-around w-full gap-2 sm:gap-4'):
+                    if zadnji:
+                        try:
+                            potvrda_vrijeme = datetime.strptime(zadnji['vrijemePotvrde'], "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y. %H:%M")
+                        except:
+                            potvrda_vrijeme = zadnji['vrijemePotvrde']
+                        ui.label(f'⏱️{potvrda_vrijeme}, 👩‍⚕️ {zadnji["osoblje"]}, 🚨{self.zone_name.lower()}, 🧓{zadnji["korisnik"]}')\
+                            .classes("text-gray-400 text-xs sm:text-sm lg:text-base")
+
+                    # PIN input and confirmation button
+                    pin_input = ui.input(label='PIN (4 znamenke)', password=True)\
+                        .props('type=number inputmode=numeric pattern="[0-9]*"')\
+                        .classes('w-40 sm:w-60 font-semibold text-lg sm:text-xl lg:text-2xl')
+
+                    ui.button('POTVRDI', on_click=self._potvrdi(pin_input))\
+                        .props('flat unelevated')\
+                        .classes('bg-gray-800 rounded-lg sm:rounded-xl text-white hover:bg-gray-700 text-sm sm:text-base')
+
+    def _potvrdi(self, pin_input):
+        """Create handler function for alarm confirmation."""
+        def handler():
+            pin = pin_input.value.strip()
+            if not validan_pin(pin):
+                ui.notify('⚠️ Neispravan PIN!', type='negative')
+                return
+            osoblje = validiraj_osoblje(pin)
+            if osoblje:
+                potvrdi_alarm(self.id, osoblje[1])
+                set_comm_flag('resetAlarm', 1)
+                ui.notify(f'✔️ Alarm potvrđen od: {osoblje[1]}', type='positive')
+            else:
+                ui.notify('❌ Neispravan PIN ili neaktivno osoblje!', type='negative')
+        return handler
+
+# ------------------ SOUND CONTROLLER CLASS ------------------
+class AlarmSoundController:
+    def __init__(self, audio_path):
+        self.audio_path = audio_path
+        self.enabled = True
+        # Učitaj audio element ali ga sakrij
+        ui.audio(self.audio_path).props('loop controls=false').classes('hidden')
+
+    def play(self):
+        if self.enabled:
+            ui.run_javascript("""
+                const audio = document.querySelector('audio');
+                if (audio && audio.paused) {
+                    audio.play().catch(() => {});
+                }
+            """)
+
+    def pause(self):
         ui.run_javascript("""
             const audio = document.querySelector('audio');
-            if (audio && audio.paused) {
-                audio.play().catch(() => {});
+            if (audio && !audio.paused) {
+                audio.pause();
             }
         """)
 
-def pause_sound():
-    ui.run_javascript("""
-        const audio = document.querySelector('audio');
-        if (audio && !audio.paused) {
-            audio.pause();
-        }
-    """)
+    def disable(self):
+        self.enabled = False
+        self.pause()
+        ui.notify('🔇 Zvuk isključen', type='info')
 
-def disable_sound():
-    global sound_enabled
-    sound_enabled = False
-    pause_sound()
-    ui.notify('🔇 Zvuk isključen', type='info')
+    def enable(self):
+        if not self.enabled:
+            self.enabled = True
+            self.play()
+            ui.notify('🔔 Novi alarm – zvuk ponovno uključen', type='warning')
 
-def enable_sound():
-    global sound_enabled
-    if not sound_enabled:
-        sound_enabled = True
-        play_sound()
-        ui.notify('🔔 Novi alarm – zvuk ponovno uključen', type='warning')
-
-# ------------------ ALARM DISPLAY FUNCTION ------------------
-def prikazi_alarm(row: dict, container, update_callback):
-    """Prikaži alarm kao UI element."""
-    alarm_id = row["id"]
-    zone_name = row["zone_name"]
-    korisnik = row["korisnik"] or "NEPOZNAT"
-    soba = row["soba"] or "N/A"
-    vrijeme = datetime.strptime(row["vrijeme"], "%Y-%m-%d %H:%M:%S")
-    
-    samo_vrijeme = vrijeme.strftime("%H:%M")
-    proteklo_teksta = f"{int((datetime.now() - vrijeme).total_seconds() // 60)} min"
-
-    with container:
-        with ui.expansion().classes('max-w-full border border-gray-300 rounded-lg sm:rounded-xl p-1 sm:p-2 w-full') as exp:
-            with exp.add_slot('header'):
-                with ui.element('div').classes('grid grid-cols-[2fr_2fr_2fr_3fr] sm:grid-cols-[1fr_1fr_1fr_1.5fr] w-full gap-2 sm:gap-4 px-2 sm:px-4'):
-                    ui.label(f'🕒 {samo_vrijeme}').classes('text-sm sm:text-base lg:text-lg')
-                    ui.label(f'⏱️ {proteklo_teksta}').classes('text-sm sm:text-base lg:text-lg')
-                    ui.label(f'🛏️ {soba}').classes('text-sm sm:text-base lg:text-lg')
-                    ui.label(f'🧓 {korisnik}').classes('text-sm sm:text-base lg:text-lg')
-
-            # Show last confirmed alarm for this user if available
-            zadnji = get_zadnji_potvrdjeni_alarm_korisnika(korisnik)
-            with ui.row().classes('items-end justify-around w-full gap-2 sm:gap-4'):
-                if zadnji:
-                    try:
-                        potvrda_vrijeme = datetime.strptime(zadnji['vrijemePotvrde'], "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y. %H:%M")
-                    except:
-                        potvrda_vrijeme = zadnji['vrijemePotvrde']
-                    ui.label(f'⏱️{potvrda_vrijeme}, 👩‍⚕️ {zadnji["osoblje"]}, 🚨{zone_name.lower()}, 🧓{zadnji["korisnik"]}')\
-                        .classes("text-gray-400 text-xs sm:text-sm lg:text-base")
-
-                # PIN input and confirmation button
-                pin_input = ui.input(label='PIN (4 znamenke)', password=True)\
-                    .props('type=number inputmode=numeric pattern="[0-9]*"')\
-                    .classes('w-40 sm:w-60 font-semibold text-lg sm:text-xl lg:text-2xl')
-
-                def potvrdi_handler():
-                    pin = pin_input.value.strip()
-                    if not validan_pin(pin):
-                        ui.notify('⚠️ Neispravan PIN!', type='negative')
-                        return
-                    osoblje = validiraj_osoblje(pin)
-                    if osoblje:
-                        potvrdi_alarm(alarm_id, osoblje[1])
-                        set_comm_flag('resetAlarm', 1)
-                        ui.notify(f'✔️ Alarm potvrđen od: {osoblje[1]}', type='positive')
-                        # Pozovi update callback za instant refresh
-                        if update_callback:
-                            update_callback()
-                    else:
-                        ui.notify('❌ Neispravan PIN ili neaktivno osoblje!', type='negative')
-
-                ui.button('POTVRDI', on_click=potvrdi_handler)\
-                    .props('flat unelevated')\
-                    .classes('bg-gray-800 rounded-lg sm:rounded-xl text-white hover:bg-gray-700 text-sm sm:text-base')
 
 # ------------------ MAIN PAGE ------------------
 @ui.page("/")
@@ -183,9 +186,7 @@ def main_page():
     
     last_alarm_ids = set()  # Track displayed alarms to avoid unnecessary updates
     last_render_time = datetime.min  # Track last full render time
-    
-    # Initialize sound controller
-    init_sound(SOUND_FILE)
+    sound = AlarmSoundController(SOUND_FILE)  # Initialize sound controller
 
     # Header with current time and title
     with ui.row().classes('text-sm sm:text-base lg:text-lg max-w-full flex-nowrap font-mono text-white items-center justify-between w-full mb-2 sm:mb-4 whitespace-nowrap'):
@@ -200,9 +201,10 @@ def main_page():
         ui.label('🔔 AKTIVNI ALARMI - DOM BUZIN sustav nadzora korisnika 🔔').classes(
             'text-center bg-gray-800 p-1 sm:p-2 rounded-lg sm:rounded-xl')
 
-        ui.button( icon='volume_off', on_click=disable_sound)\
+        ui.button( icon='volume_off', on_click=sound.disable)\
             .props('flat unelevated')\
             .classes('bg-gray-800 rounded-lg sm:rounded-xl text-white hover:bg-gray-700')
+
 
     # -------------- Container for alarm list ------------------
     alarm_list_container = ui.column().classes('w-full')
@@ -228,7 +230,7 @@ def main_page():
             last_alarm_ids = current_ids
             last_render_time = now
             alarm_list_container.clear()
-            pause_sound()
+            sound.pause()
 
             with alarm_list_container:
                 with ui.card().classes('w-full h-screen flex items-center justify-center bg-black'):
@@ -249,22 +251,25 @@ def main_page():
         if current_ids != last_alarm_ids or (now - last_render_time >= RENDER_INTERVAL):
             alarm_list_container.clear()
             for _, row in df.iterrows():
-                prikazi_alarm(row, alarm_list_container, update_alarms)
+                Alarm(row, alarm_list_container).prikazi()
 
             last_render_time = now
             last_alarm_ids = current_ids
 
             # 4. Pali zvuk SAMO ako je novi alarm
             if novi_alarm:
-                if not sound_enabled:
-                    enable_sound()
-                play_sound()
+                if not sound.enabled:
+                    sound.enable()
+                sound.play()
+
+
+
 
     # Initial setup
     if not get_aktivni_alarms().empty:
-        play_sound()
+        sound.play()
     else:
-        pause_sound()
+        sound.pause()
 
     update_alarms()  # Initial update
     ui.timer(REFRESH_INTERVAL, update_alarms)  # Set up periodic updates
