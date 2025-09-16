@@ -159,7 +159,7 @@ if korisnici_df.empty:
         with col2:
             soba = st.text_input("Soba:")
 
-        if st.form_submit_button("➕ Kreiraj korisnika", use_container_width=True):
+        if st.form_submit_button("➕ Kreiraj korisnika", width="stretch"):
             if not ime.strip():
                 st.error("❌ Ime je obavezno!")
             else:
@@ -215,9 +215,7 @@ else:
                 with col2:
                     nova_soba = st.text_input("Soba:")
 
-                if st.form_submit_button(
-                    "➕ Kreiraj korisnika", use_container_width=True
-                ):
+                if st.form_submit_button("➕ Kreiraj korisnika", width="stretch"):
                     if not novo_ime.strip():
                         st.error("❌ Ime je obavezno!")
                     else:
@@ -286,9 +284,7 @@ else:
                                 key=f"edit_soba_k_{korisnik_id}",
                             )
 
-                        if st.form_submit_button(
-                            "💾 Spremi promjene", use_container_width=True
-                        ):
+                        if st.form_submit_button("💾 Spremi promjene", width="stretch"):
                             if update_korisnik(
                                 korisnik_id, novo_ime.strip(), nova_soba.strip() or None
                             ):
@@ -316,7 +312,7 @@ else:
                             if st.button(
                                 "🔗 Dodijeli",
                                 key=f"dodijeli_{korisnik_id}",
-                                use_container_width=True,
+                                width="stretch",
                             ):
                                 if dodijeli_narukvicu_korisniku(
                                     korisnik_id, selected_narukvica
@@ -336,7 +332,7 @@ else:
                         f"🗑️ Obriši korisnika",
                         key=f"delete_korisnik_{korisnik_id}",
                         type="secondary",
-                        use_container_width=True,
+                        width="stretch",
                     ):
                         if obrisi_korisnika(korisnik_id):
                             st.success("✅ Korisnik obrisan!")

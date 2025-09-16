@@ -3,7 +3,6 @@ import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta
 from nice_config import DB_PATH, SOUND_FILE
-import time
 
 # ------------------ CONSTANTS ------------------
 
@@ -18,6 +17,9 @@ def get_connection() -> sqlite3.Connection:
 
 def validan_pin(pin: str, duljina: int = 4) -> bool:
     return pin.isdigit() and len(pin) == duljina
+
+
+import time
 
 
 def set_comm_flag(key: str, value: int = 1):
@@ -107,90 +109,51 @@ def potvrdi_alarm(alarm_id: int, osoblje_ime: str):
 # ------------------ SOUND CONTROLLER FUNCTIONS ------------------
 
 
-def ensure_audio_ready():
-    """Osiguraj da je audio element spreman prije korištenja"""
-    ui.run_javascript(
-        """
-        function checkAudioReady() {
-            const audio = document.querySelector('audio');
-            if (!audio) {
-                console.log('Audio element not found');
-                return false;
-            }
-            
-            // Provjeri je li audio spreman za korištenje
-            if (audio.readyState >= 2) { // HAVE_CURRENT_DATA ili više
-                return true;
-            }
-            
-            return false;
-        }
-        
-        // Vrati rezultat provjere
-        window.audioReady = checkAudioReady();
-    """
-    )
-
-
 def control_sound(action, sound_enabled=None):
-    """Centralizirani sound kontroler s race condition zaštitom
+    """Centralizirani sound kontroler
     Args:
         action: 'play', 'pause', 'toggle', 'auto_play'
         sound_enabled: trenutno stanje zvuka
     Returns:
         nova vrijednost sound_enabled (ili postojeća ako nema promjene)
     """
-
-    # Osiguraj da je audio spreman
-    ensure_audio_ready()
-
     if action == "play" and sound_enabled:
         ui.run_javascript(
             """
-            setTimeout(() => {
-                const audio = document.querySelector('audio');
-                if (audio && audio.paused && window.audioReady && window.appInitialized) {
-                    audio.play().catch(e => console.log('Audio play failed:', e));
-                }
-            }, 50);
+            const audio = document.querySelector('audio');
+            if (audio && audio.paused) {
+                audio.play().catch(() => {});
+            }
         """
         )
-
     elif action == "pause":
         ui.run_javascript(
             """
-            setTimeout(() => {
-                const audio = document.querySelector('audio');
-                if (audio && !audio.paused) {
-                    audio.pause();
-                }
-            }, 50);
+            const audio = document.querySelector('audio');
+            if (audio && !audio.paused) {
+                audio.pause();
+            }
         """
         )
-
     elif action == "toggle":
         new_state = not sound_enabled
         if new_state:
             ui.run_javascript(
                 """
-                setTimeout(() => {
-                    const audio = document.querySelector('audio');
-                    if (audio && audio.paused && window.audioReady && window.appInitialized) {
-                        audio.play().catch(e => console.log('Audio play failed:', e));
-                    }
-                }, 50);
+                const audio = document.querySelector('audio');
+                if (audio && audio.paused) {
+                    audio.play().catch(() => {});
+                }
             """
             )
-            ui.notify("🔊 Zvuk uključen", type="warning")
+            ui.notify("� Zvuk uključen", type="warning")
         else:
             ui.run_javascript(
                 """
-                setTimeout(() => {
-                    const audio = document.querySelector('audio');
-                    if (audio && !audio.paused) {
-                        audio.pause();
-                    }
-                }, 50);
+                const audio = document.querySelector('audio');
+                if (audio && !audio.paused) {
+                    audio.pause();
+                }
             """
             )
             ui.notify("🔇 Zvuk isključen", type="info")
@@ -202,12 +165,10 @@ def control_sound(action, sound_enabled=None):
             ui.notify("🔔 Novi alarm – zvuk ponovno uključen", type="warning")
         ui.run_javascript(
             """
-            setTimeout(() => {
-                const audio = document.querySelector('audio');
-                if (audio && audio.paused && window.audioReady && window.appInitialized) {
-                    audio.play().catch(e => console.log('Audio play failed:', e));
-                }
-            }, 50);
+            const audio = document.querySelector('audio');
+            if (audio && audio.paused) {
+                audio.play().catch(() => {});
+            }
         """
         )
         return True  # Zvuk je sada omogućen
@@ -301,16 +262,13 @@ def main_page():
     last_alarm_ids = set()  # Track displayed alarms to avoid unnecessary updates
     last_render_time = datetime.min  # Track last full render time
     sound_enabled = True  # Lokalna varijabla umjesto globalne
-    initialization_complete = False  # Flag za potpunu inicijalizaciju
 
-    # Background sound element (hidden) - s boljim error handling
+    # Background sound element (hidden) SOUND_FILE should be defined in nice_config.py
     ui.audio(SOUND_FILE).props("loop controls=false").classes("hidden")
 
     def toggle_sound_handler():
         nonlocal sound_enabled
-        # Samo ako je inicijalizacija završena
-        if initialization_complete:
-            sound_enabled = control_sound("toggle", sound_enabled)
+        sound_enabled = control_sound("toggle", sound_enabled)
 
     # Header with current time and title
     with ui.row().classes(
@@ -340,28 +298,8 @@ def main_page():
     # -------------- Container for alarm list ------------------
     alarm_list_container = ui.column().classes("w-full")
 
-    def initialize_app():
-        """Inicijalizacija aplikacije s delay-om za tablet"""
-        nonlocal initialization_complete
-
-        # Kratka pauza da se sve učita
-        ui.run_javascript(
-            """
-            setTimeout(() => {
-                window.appInitialized = true;
-                console.log('App initialization complete');
-            }, 300);
-        """
-        )
-
-        initialization_complete = True
-
     def update_alarms():
         nonlocal last_alarm_ids, last_render_time, sound_enabled
-
-        # Preskači ako init nije završen
-        if not initialization_complete:
-            return
 
         # 💓 Postavi heartbeat za monitoring
         set_kiosk_heartbeat()
@@ -415,18 +353,14 @@ def main_page():
             if novi_alarm:
                 sound_enabled = control_sound("auto_play", sound_enabled)
 
-    def initial_setup():
-        """Početni setup nakon inicijalizacije"""
-        if not get_aktivni_alarms().empty:
-            control_sound("play", sound_enabled)
-        else:
-            control_sound("pause", sound_enabled)
-        update_alarms()
+    # Initial setup
+    if not get_aktivni_alarms().empty:
+        control_sound("play", sound_enabled)
+    else:
+        control_sound("pause", sound_enabled)
 
-    # MODIFIED: Postupna inicijalizacija s delay-om
-    ui.timer(0.5, initialize_app, once=True)  # 500ms delay za init
-    ui.timer(1.0, initial_setup, once=True)  # 1 sekunda za initial setup
-    ui.timer(REFRESH_INTERVAL, update_alarms)  # Normalni timer
+    update_alarms()  # Initial update
+    ui.timer(REFRESH_INTERVAL, update_alarms)  # Set up periodic updates
 
 
 # ------------------ MOBILE CSS FIXES ------------------
@@ -455,58 +389,6 @@ ui.add_head_html(
     }
   }
 </style>
-
-<script>
-  // Audio state tracking za race condition zaštitu
-  window.audioReady = false;
-  window.appInitialized = false;
-  
-  // Tablet detection i dodatni safety
-  const isTablet = /tablet|ipad|playbook|silk/i.test(navigator.userAgent);
-  
-  document.addEventListener('DOMContentLoaded', () => {
-    const audio = document.querySelector('audio');
-    if (audio) {
-      // Setup audio event listeners
-      audio.addEventListener('canplaythrough', () => {
-        window.audioReady = true;
-        console.log('Audio ready for playback');
-      });
-      
-      audio.addEventListener('loadeddata', () => {
-        window.audioReady = true;
-        console.log('Audio data loaded');
-      });
-      
-      audio.addEventListener('error', (e) => {
-        console.log('Audio error:', e);
-        window.audioReady = false;
-      });
-      
-      // Force load audio
-      audio.load();
-      
-      // Tablet specific handling
-      if (isTablet) {
-        setTimeout(() => {
-          console.log('Tablet audio initialization complete');
-          window.audioReady = true;
-        }, 1000);
-      }
-    }
-  });
-  
-  // Backup audio ready checker
-  setTimeout(() => {
-    if (!window.audioReady) {
-      const audio = document.querySelector('audio');
-      if (audio && audio.readyState >= 2) {
-        window.audioReady = true;
-        console.log('Audio ready (backup check)');
-      }
-    }
-  }, 2000);
-</script>
 """
 )
 

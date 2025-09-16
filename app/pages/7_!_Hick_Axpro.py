@@ -285,7 +285,7 @@ with tab1:
                 ),
                 "korisnik_ime": st.column_config.TextColumn("Korisnik"),
             },
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -326,7 +326,7 @@ with tab2:
     if st.button(
         "🔄 Sinkroniziraj zone s centrale",
         disabled=not AXPRO_AVAILABLE,
-        use_container_width=True,
+        width="stretch",
     ):
         nove, azurirane, neizmijenjene = sinkroniziraj_zone()
         st.session_state.last_sync = datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -361,7 +361,7 @@ with tab3:
 
             # Prikaži podatke u tablici
             df = pd.DataFrame(zone_list)
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width="stretch", hide_index=True)
 
             # Provjeri aktivne alarme
             active = df[df["alarm"] == True]
@@ -391,7 +391,7 @@ st.subheader("📜 Log aktivnosti")
 # Kontrole za log
 col_log1, col_log2 = st.columns([3, 1])
 with col_log2:
-    if st.button("🧹 Očisti log", use_container_width=True):
+    if st.button("🧹 Očisti log", width="stretch"):
         st.session_state.sync_log = []
         st.rerun()
 
