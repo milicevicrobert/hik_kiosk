@@ -60,7 +60,7 @@ def obrisi_korisnika(k_id):
     try:
         with sqlite3.connect(DB_PATH) as conn:
             # Prvo ukloni korisnika iz svih zona
-            conn.execute("UPDATE narukvice SET korisnik_id = NULL WHERE korisnik_id = ?", (k_id,))
+            conn.execute("UPDATE zone SET korisnik_id = NULL WHERE korisnik_id = ?", (k_id,))
             # Zatim obriši korisnika
             conn.execute("DELETE FROM korisnici WHERE id = ?", (k_id,))
             conn.commit()
@@ -93,7 +93,7 @@ def kreiraj_i_dodijeli_korisnika(zona_id, ime, soba):
             korisnik_id = cur.lastrowid
             
             # Odmah ga dodijeli zoni
-            conn.execute("UPDATE narukvice SET korisnik_id = ? WHERE id = ?", (korisnik_id, zona_id))
+            conn.execute("UPDATE zone SET korisnik_id = ? WHERE id = ?", (korisnik_id, zona_id))
             conn.commit()
         return True, korisnik_id
     except Exception as e:
@@ -104,7 +104,7 @@ def otkvaci_korisnika_od_zone(zona_id):
     """Otkvači korisnika od narukvice (korisnik ostaje u tablici)"""
     try:
         with sqlite3.connect(DB_PATH) as conn:
-            conn.execute("UPDATE narukvice SET korisnik_id = NULL WHERE id = ?", (zona_id,))
+            conn.execute("UPDATE zone SET korisnik_id = NULL WHERE id = ?", (zona_id,))
             conn.commit()
         return True
     except Exception as e:
@@ -116,7 +116,7 @@ def izbrisi_korisnika_iz_zone(zona_id, korisnik_id):
     try:
         with sqlite3.connect(DB_PATH) as conn:
             # Prvo otkvači od narukvice
-            conn.execute("UPDATE narukvice SET korisnik_id = NULL WHERE id = ?", (zona_id,))
+            conn.execute("UPDATE zone SET korisnik_id = NULL WHERE id = ?", (zona_id,))
             # Zatim izbriši korisnika iz tablice
             conn.execute("DELETE FROM korisnici WHERE id = ?", (korisnik_id,))
             conn.commit()
