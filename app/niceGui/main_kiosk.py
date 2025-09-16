@@ -2,6 +2,7 @@ from nicegui import ui
 import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta
+import time
 from nice_config import DB_PATH,SOUND_FILE
 
 # ------------------ CONSTANTS ------------------
@@ -15,8 +16,6 @@ def get_connection() -> sqlite3.Connection:
 
 def validan_pin(pin: str, duljina: int = 4) -> bool:
     return pin.isdigit() and len(pin) == duljina
-
-import time
 
 def set_comm_flag(key: str, value: int = 1):
     with get_connection() as conn:
