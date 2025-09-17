@@ -3,10 +3,11 @@ app/data/
 app/_deprecated/
 app/__pycache__/
 app/axpro/__pycache__/
-app/nicegui/__pycache__/
+app/niceGui/__pycache__/
 app/static/__pycache__/
 app/templates/__pycache__/  
-**/__pycache__/
+
+# Python artifacts
 *.pyc
 *.pyo
 *.db-journal

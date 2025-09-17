@@ -39,7 +39,7 @@ def insert_or_update_alarm(zona):
             SELECT COUNT(*) FROM alarms 
             WHERE zone_id = ? 
             AND (potvrda = 0 OR 
-                (potvrda = 1 AND datetime(vrijemePotvrde) > datetime('now', '-{} minutes')))
+                (potvrda = 1 AND vrijemePotvrde > datetime('now', '-{} minutes')))
         """.format(GRACE_PERIOD_MINUTES), (zone_id,))
         recent_alarm = cur.fetchone()[0] > 0
 
