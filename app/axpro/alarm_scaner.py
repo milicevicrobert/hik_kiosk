@@ -21,6 +21,8 @@ from ax_config import DB_PATH
 from datetime import datetime
 from axpro_auth import login_axpro, get_zone_status, clear_axpro_alarms
 
+GRACE_PERIOD_MINUTES = 1  # Grace period za potvrđene alarme
+
 def insert_or_update_alarm(zona):
     """
     Unesi novi alarm u bazu ako već ne postoji nepotvrđeni alarm za istu zonu.
@@ -32,12 +34,17 @@ def insert_or_update_alarm(zona):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
 
-        # Provjeri postoji li već nepotvrđen alarm za ovu zonu
-        cur.execute("SELECT COUNT(*) FROM alarms WHERE zone_id = ? AND potvrda = 0", (zone_id,))
-        already_active = cur.fetchone()[0] > 0
+        # Provjeri postoji li već nepotvrđen alarm za ovu zonu ili potvrđen unutar grace perioda
+        cur.execute("""
+            SELECT COUNT(*) FROM alarms 
+            WHERE zone_id = ? 
+            AND (potvrda = 0 OR 
+                (potvrda = 1 AND datetime(vrijemePotvrde) > datetime('now', '-{} minutes')))
+        """.format(GRACE_PERIOD_MINUTES), (zone_id,))
+        recent_alarm = cur.fetchone()[0] > 0
 
-        if already_active:
-            return  # preskoči ako već postoji nepotvrđen alarm
+        if recent_alarm:
+            return  # preskoči ako već postoji nepotvrđen alarm ili potvrđen unutar grace perioda
 
         # Dohvati ime korisnika i sobu iz zone
         cur.execute("""
@@ -150,8 +157,8 @@ def run_scanner():
                             insert_or_update_alarm(zona)
                             active_alarms += 1
 
-                    if active_alarms > 0:
-                        print(f"🚨 Obrađeno {active_alarms} alarma")
+                    #if active_alarms > 0:
+                    #    print(f"🚨 Obrađeno {active_alarms} alarma")
                         
                 except Exception as scan_error:
                     print(f"❌ Greška skeniranja: {scan_error}")
