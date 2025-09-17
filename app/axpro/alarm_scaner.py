@@ -14,6 +14,7 @@ Također koristi SQLite za pohranu i upravljanje alarmima.
 Autor: Robert Miličević"""
 
 
+
 import time
 import os
 import sqlite3
@@ -21,11 +22,10 @@ from ax_config import DB_PATH
 from datetime import datetime
 from axpro_auth import login_axpro, get_zone_status, clear_axpro_alarms
 
-GRACE_PERIOD_MINUTES = 1  # Grace period za potvrđene alarme
 
 def insert_or_update_alarm(zona):
     """
-    Unesi novi alarm u bazu ako već ne postoji nepotvrđeni alarm za istu zonu.
+    Unesi novi alarm u bazu ako već ne postoji aktivni alarm za istu zonu.
     Ako alarm već postoji, preskoči unos.
     """
     zone_id = zona.get("id")
@@ -37,20 +37,15 @@ def insert_or_update_alarm(zona):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
 
-        # Provjeri postoji li već nepotvrđen alarm za ovu zonu ili potvrđen unutar grace perioda
-        cur.execute("""
-            SELECT COUNT(*) FROM alarms 
-            WHERE zone_id = ? 
-            AND (potvrda = 0 OR 
-                (potvrda = 1 AND vrijemePotvrde > datetime('now', '-{} minutes')))
-        """.format(GRACE_PERIOD_MINUTES), (zone_id,))
-        recent_alarm = cur.fetchone()[0] > 0
+        # Provjeri postoji li već aktivni alarm za ovu zonu ako je potvrda = 0
+        # znači da je alarm aktivan u GUI-ju
+        cur.execute("SELECT COUNT(*) FROM alarms WHERE zone_id = ? AND potvrda = 0", (zone_id,))
+        already_active = cur.fetchone()[0] > 0
 
-        if recent_alarm:
-            print(f"⏸️ Preskoček - zona {zone_id} ima nedavni alarm")  # ← DODAJ OVO
-            return
-        else:
-            print(f"✅ Kreiram novi alarm za zonu {zone_id}")  # ← DODAJ OVO
+        if already_active:
+            print(f"⏸️ Preskoči - zona {zone_id} ima aktivan alarm")  
+            return  
+
 
         # Dohvati ime korisnika i sobu iz zone
         cur.execute("""
@@ -121,15 +116,13 @@ def set_heartbeat():
 
 def run_scanner():
     print("🚀 AX PRO Scanner pokrenut")
-    
     cookie = None
     connection_attempts = 0
-
     while True:
         try:
             set_heartbeat()
-            
             if cookie is None:
+            # Pokušaj login ako nemamo cookie ako imamo cookie, koristimo postojeći
                 connection_attempts += 1
                 try:
                     cookie = login_axpro()
@@ -145,8 +138,10 @@ def run_scanner():
                         time.sleep(5)
                     continue
 
+            # Ako imamo cookie, nastavljamo s provjerom i skeniranjem    
             reset_izvrsen = False
             try:
+                #ovo poziva reset
                 reset_izvrsen = resetiraj_alarme_ako_potrebno(cookie)
             except Exception as reset_error:
                 print(f"❌ Greška resetiranja: {reset_error}")
@@ -155,16 +150,19 @@ def run_scanner():
                 try:
                     data = get_zone_status(cookie)
                     zones = data.get("ZoneList", [])
-
                     active_alarms = 0
                     for entry in zones:
                         zona = entry["Zone"]
+
+                        # Provjeri je li zona u alarmnom stanju ako jest vraća True inače False
                         if zona.get("alarm", False):
+                            # sad se poziva insert_or_update_alarm koja unosi novi alarm u bazu ako već ne postoji nepotvrđeni alarm za istu zonu
+                            # znači da je zona u alarmnom stanju prije nego što se pozove ova funkcija
                             insert_or_update_alarm(zona)
                             active_alarms += 1
 
-                    #if active_alarms > 0:
-                    #    print(f"🚨 Obrađeno {active_alarms} alarma")
+                    if active_alarms > 0:
+                        print(f"🚨 Obrađeno {active_alarms} alarma")
                         
                 except Exception as scan_error:
                     print(f"❌ Greška skeniranja: {scan_error}")
@@ -177,7 +175,7 @@ def run_scanner():
             print(f"❌ Neočekivana greška: {e}")
             cookie = None
 
-        time.sleep(2)
+        time.sleep(5)  # Pauza između skeniranja
 
 if __name__ == "__main__":
     print("🚀 HIKVision AX PRO Scanner")
