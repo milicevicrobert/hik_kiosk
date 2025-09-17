@@ -2,7 +2,11 @@
 app/data/
 app/_deprecated/
 app/__pycache__/
-app/*/__pycache__/
+app/axpro/__pycache__/
+app/nicegui/__pycache__/
+app/static/__pycache__/
+app/templates/__pycache__/  
+**/__pycache__/
 *.pyc
 *.pyo
 *.db-journal
@@ -13,4 +17,17 @@ app/*/__pycache__/
 
 # OS files
 .DS_Store
-Thumbs.dbapp/data/ 
+Thumbs.db
+
+# Virtual environment
+venv/
+.env
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# .bat files
+*.bat
+

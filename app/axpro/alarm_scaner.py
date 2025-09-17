@@ -81,7 +81,7 @@ def get_comm_flag(key):
 
 def set_comm_flag(key, value=0):
     """
-    Postavi vrijednost zastavice key u comm tablici na value
+    Postavi vrijednost zastavice po ključu key u comm tablici
     """
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("""
@@ -94,6 +94,7 @@ def set_comm_flag(key, value=0):
 def resetiraj_alarme_ako_potrebno(cookie):
     """
     Resetiraj alarme na AX PRO centrali ako je zastavica 'resetAlarm' postavljena na 1.
+    Vraća True ako je reset izvršen, False inače.
     """
     if get_comm_flag("resetAlarm") == 1:
         try:
@@ -101,8 +102,11 @@ def resetiraj_alarme_ako_potrebno(cookie):
             status, response = clear_axpro_alarms(cookie)
             print(f"[{datetime.now()}] ✅ Resetirano (status: {status})")
             set_comm_flag("resetAlarm", 0)
+            return True  # Reset je izvršen
         except Exception as e:
             print(f"[{datetime.now()}] ❌ Greška pri resetiranju alarma: {e}")
+            return False  # Reset nije uspješan
+    return False  # Nema potrebe za reset
 
 def set_heartbeat():
     """Postavi heartbeat timestamp za monitoring"""
@@ -145,35 +149,40 @@ def run_scanner():
                     continue  # Preskoči ostatak petlje i pokušaj ponovno
 
             # 🔁 Provjeri treba li resetirati alarm
+            reset_izvrsen = False
             try:
-                resetiraj_alarme_ako_potrebno(cookie)
+                reset_izvrsen = resetiraj_alarme_ako_potrebno(cookie)
             except Exception as reset_error:
                 print(f"⚠️ Greška pri resetiranju alarma: {reset_error}")
 
-            # 📡 Provjeri statuse zona
-            try:
-                print("📡 Skeniranje zona...", end="")
-                data = get_zone_status(cookie)
-                zones = data.get("ZoneList", [])
-                print(f" ✅ Pronađeno {len(zones)} zona")
+            # 📡 Provjeri statuse zona - SAMO AKO RESET NIJE IZVRŠEN
+            
+            if not reset_izvrsen:
+                try:
+                    print("📡 Skeniranje zona...", end="")
+                    data = get_zone_status(cookie)
+                    zones = data.get("ZoneList", [])
+                    print(f" ✅ Pronađeno {len(zones)} zona")
 
-                active_alarms = 0
-                for entry in zones:
-                    zona = entry["Zone"]
-                    if zona.get("alarm", False):
-                        insert_or_update_alarm(zona)
-                        active_alarms += 1
+                    active_alarms = 0
+                    for entry in zones:
+                        zona = entry["Zone"]
+                        if zona.get("alarm", False):
+                            insert_or_update_alarm(zona)
+                            active_alarms += 1
 
-                if active_alarms > 0:
-                    print(f"🚨 Obrađeno {active_alarms} aktivnih alarma")
-                else:
-                    print("✅ Nema aktivnih alarma")
-                    
-            except Exception as scan_error:
-                print(f"❌ Greška pri skeniranju: {scan_error}")
-                # Možda je cookie istekao, resetiraj ga
-                cookie = None
-
+                    if active_alarms > 0:
+                        print(f"🚨 Obrađeno {active_alarms} aktivnih alarma")
+                    else:
+                        print("✅ Nema aktivnih alarma")
+                        
+                except Exception as scan_error:
+                    print(f"❌ Greška pri skeniranju: {scan_error}")
+                    # Možda je cookie istekao, resetiraj ga
+                    cookie = None
+            else:
+                print("⏭️ Preskačem skeniranje zona jer je izvršen reset alarma.")
+                
         except KeyboardInterrupt:
             print("\n🛑 Scanner zaustavljen od korisnika (Ctrl+C)")
             break
