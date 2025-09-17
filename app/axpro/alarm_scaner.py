@@ -30,6 +30,9 @@ def insert_or_update_alarm(zona):
     """
     zone_id = zona.get("id")
     zone_name = zona.get("name")
+    
+    # Dodano za praćenje
+    print(f"🔍 Detektirana aktivna zona: ID={zone_id}, Name={zone_name}") 
 
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -44,7 +47,10 @@ def insert_or_update_alarm(zona):
         recent_alarm = cur.fetchone()[0] > 0
 
         if recent_alarm:
-            return  # preskoči ako već postoji nepotvrđen alarm ili potvrđen unutar grace perioda
+            print(f"⏸️ Preskoček - zona {zone_id} ima nedavni alarm")  # ← DODAJ OVO
+            return
+        else:
+            print(f"✅ Kreiram novi alarm za zonu {zone_id}")  # ← DODAJ OVO
 
         # Dohvati ime korisnika i sobu iz zone
         cur.execute("""
