@@ -26,8 +26,15 @@ st.caption("Provjera, inicijalizacija i pregled podataka")
 # Database configuration
 REQUIRED_TABLES = {
     "osoblje": {"id", "ime", "sifra", "aktivna"},
-    "korisnici": {"id", "ime", "soba"},
-    "zone": {"id", "naziv", "korisnik_id"},
+    "korisnici": {"id", "ime", "soba", "zona_id"},
+    "zone": {
+        "id",
+        "naziv",
+        "korisnik_id",
+        "alarm_status",
+        "last_updated",
+        "last_alarm_time",
+    },
     "alarms": {
         "id",
         "zone_id",
@@ -106,7 +113,8 @@ def init_database(db_file=DB_PATH):
                 CREATE TABLE IF NOT EXISTS korisnici (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     ime TEXT NOT NULL,
-                    soba TEXT
+                    soba TEXT,
+                    zona_id INTEGER 
                 )
                 """
                 )
@@ -117,7 +125,11 @@ def init_database(db_file=DB_PATH):
                 CREATE TABLE IF NOT EXISTS zone (
                     id INTEGER PRIMARY KEY,
                     naziv TEXT NOT NULL,
-                    korisnik_id INTEGER
+                    korisnik_id INTEGER,
+                    alarm_status INTEGER DEFAULT 0,
+                    last_updated TEXT DEFAULT NULL,
+                    last_alarm_time TEXT DEFAULT NULL
+
                 )
                 """
                 )
@@ -158,6 +170,45 @@ def init_database(db_file=DB_PATH):
     conn.commit()
     conn.close()
     return missing_tables
+
+
+def ensure_table_columns(conn, table_name, required_columns):
+    """Dodaje nedostajuće kolone u tablicu prema REQUIRED_TABLES"""
+    cur = conn.cursor()
+    cur.execute(f"PRAGMA table_info({table_name})")
+    existing_columns = {row[1] for row in cur.fetchall()}
+
+    # Mapiranje tipova po imenu kolone (prilagodite prema potrebi)
+    type_map = {
+        "id": "INTEGER",
+        "ime": "TEXT",
+        "sifra": "TEXT",
+        "aktivna": "INTEGER",
+        "soba": "TEXT",
+        "zona_id": "INTEGER",
+        "korisnik_id": "INTEGER",
+        "alarm_status": "INTEGER DEFAULT 0",
+        "last_updated": "TEXT DEFAULT NULL",
+        "last_alarm_time": "TEXT DEFAULT NULL",
+        "zone_name": "TEXT",
+        "vrijeme": "TEXT",
+        "potvrda": "INTEGER DEFAULT 0",
+        "vrijemePotvrde": "TEXT",
+        "korisnik": "TEXT",
+        "osoblje": "TEXT",
+        "key": "TEXT",
+        "value": "INTEGER DEFAULT 0",
+    }
+
+    for col in required_columns - existing_columns:
+        col_type = type_map.get(col, "TEXT")
+        try:
+            cur.execute(f"ALTER TABLE {table_name} ADD COLUMN {col} {col_type}")
+            print(f"✅ Dodana kolona '{col}' u tablicu '{table_name}'")
+        except Exception as e:
+            print(f"❌ Greška pri dodavanju kolone '{col}' u '{table_name}': {e}")
+
+    conn.commit()
 
 
 def clear_table_data(table_name):
@@ -274,6 +325,10 @@ with tab1:
         if st.button("🔄 Inicijaliziraj/Popravi Bazu", width="stretch"):
             with st.spinner("Inicijaliziram bazu..."):
                 missing_tables = init_database()
+                with sqlite3.connect(DB_PATH) as conn:
+                    for table_name, columns in REQUIRED_TABLES.items():
+                        ensure_table_columns(conn, table_name, columns)
+
                 if missing_tables:
                     st.success(
                         f"✅ Tablice stvorene/ažurirane: {', '.join(missing_tables)}"

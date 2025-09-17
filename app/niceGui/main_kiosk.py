@@ -7,13 +7,106 @@ import time
 
 # ------------------ CONSTANTS ------------------
 
+with open("head.html", encoding="utf-8") as f:
+    HEAD_HTML = f.read()
+
 REFRESH_INTERVAL = 2  # seconds - how often to check for new alarms
 RENDER_INTERVAL = timedelta(seconds=60)  # Minimum interval between full UI re-renders
 
 
 # ------------------ HELPER FUNCTIONS ------------------
+
+
+def create_alarm_from_zone(zone_row: dict) -> None:
+    """Unesi novi alarm u bazu podataka na temelju zone."""
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO alarms (zone_id, zone_name, vrijeme, potvrda, korisnik, soba)
+            VALUES (?, ?, ?, 0, ?, ?)
+            """,
+            (
+                zone_row["id"],
+                zone_row["naziv"],
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                zone_row.get("korisnik"),  # <-- KORISTI PROSLIJEĐENO
+                zone_row.get("soba"),  # <-- KORISTI PROSLIJEĐENO
+            ),
+        )
+        conn.commit()
+
+
+def check_and_create_alarms():
+    """Za svaku zonu s alarm_status=1, ako nema aktivnog alarma, kreiraj novi alarm."""
+    with get_connection() as conn:
+        # Zone
+        zones_df = pd.read_sql_query(
+            "SELECT id, naziv, alarm_status, korisnik_id FROM zone", conn
+        )
+
+        # Aktivni alarmi (može biti prazno)
+        alarms_df = pd.read_sql_query(
+            "SELECT zone_id FROM alarms WHERE potvrda = 0", conn
+        )
+        aktivni_zone_ids = (
+            set(alarms_df["zone_id"].tolist()) if not alarms_df.empty else set()
+        )
+
+        for _, row in zones_df.iterrows():
+            # samo ako je zona u alarmu i nema aktivnog alarma
+            if not row.get("alarm_status"):
+                continue
+            if row["id"] in aktivni_zone_ids:
+                continue
+
+            korisnik = None
+            soba = None
+
+            # pažljivo pročitaj korisnik_id (može biti NaN)
+            kid = row.get("korisnik_id")
+            if pd.notna(kid):
+                try:
+                    kid_int = int(kid)
+                    korisnici_df = pd.read_sql_query(
+                        "SELECT ime, soba FROM korisnici WHERE id = ?",
+                        conn,
+                        params=(kid_int,),
+                    )
+                    if not korisnici_df.empty:
+                        korisnik = korisnici_df.iloc[0]["ime"]
+                        soba = korisnici_df.iloc[0]["soba"]
+                except (TypeError, ValueError):
+                    # npr. "NaN" ili nešto nepretvorivo — samo preskoči dohvat korisnika
+                    pass
+
+            create_alarm_from_zone(
+                {
+                    "id": row["id"],
+                    "naziv": row["naziv"],
+                    "korisnik": korisnik,
+                    "soba": soba,
+                }
+            )
+            print(f"🚨 Novi alarm za zonu {row['id']} - {row['naziv']}")
+
+
 def get_connection() -> sqlite3.Connection:
     return sqlite3.connect(DB_PATH)
+
+
+def reset_zone_alarm(zone_id: int):
+    """Spušta zonu u stanje OK: alarm_status=0 i ažurira last_updated."""
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE zone
+            SET alarm_status = 0,
+                last_updated = ?
+            WHERE id = ?
+            """,
+            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), zone_id),
+        )
+        conn.commit()
 
 
 def validan_pin(pin: str, duljina: int = 4) -> bool:
@@ -107,118 +200,60 @@ def potvrdi_alarm(alarm_id: int, osoblje_ime: str):
 # ------------------ SOUND CONTROLLER FUNCTIONS ------------------
 
 
-def ensure_audio_ready():
-    """Osiguraj da je audio element spreman prije korištenja"""
-    ui.run_javascript(
-        """
-        function checkAudioReady() {
-            const audio = document.querySelector('audio');
-            if (!audio) {
-                console.log('Audio element not found');
-                return false;
-            }
-            
-            // Provjeri je li audio spreman za korištenje
-            if (audio.readyState >= 2) { // HAVE_CURRENT_DATA ili više
-                return true;
-            }
-            
-            return false;
-        }
-        
-        // Vrati rezultat provjere
-        window.audioReady = checkAudioReady();
-    """
-    )
-
-
 def control_sound(action, sound_enabled=None):
-    """Centralizirani sound kontroler s race condition zaštitom
-    Args:
-        action: 'play', 'pause', 'toggle', 'auto_play'
-        sound_enabled: trenutno stanje zvuka
-    Returns:
-        nova vrijednost sound_enabled (ili postojeća ako nema promjene)
-    """
-
-    # Osiguraj da je audio spreman
-    ensure_audio_ready()
-
+    """Jednostavna kontrola zvuka: nema ready/appInitialized flagova."""
     if action == "play" and sound_enabled:
         ui.run_javascript(
             """
-            setTimeout(() => {
-                const audio = document.querySelector('audio');
-                if (audio && audio.paused && window.audioReady && window.appInitialized) {
-                    audio.play().catch(e => console.log('Audio play failed:', e));
-                }
-            }, 50);
+            const a = document.querySelector('audio');
+            if (a && a.paused) { a.play().catch(()=>{}); }
         """
         )
-
     elif action == "pause":
         ui.run_javascript(
             """
-            setTimeout(() => {
-                const audio = document.querySelector('audio');
-                if (audio && !audio.paused) {
-                    audio.pause();
-                }
-            }, 50);
+            const a = document.querySelector('audio');
+            if (a && !a.paused) { a.pause(); }
         """
         )
-
     elif action == "toggle":
         new_state = not sound_enabled
         if new_state:
             ui.run_javascript(
                 """
-                setTimeout(() => {
-                    const audio = document.querySelector('audio');
-                    if (audio && audio.paused && window.audioReady && window.appInitialized) {
-                        audio.play().catch(e => console.log('Audio play failed:', e));
-                    }
-                }, 50);
+                const a = document.querySelector('audio');
+                if (a && a.paused) { a.play().catch(()=>{}); }
             """
             )
             ui.notify("🔊 Zvuk uključen", type="warning")
         else:
             ui.run_javascript(
                 """
-                setTimeout(() => {
-                    const audio = document.querySelector('audio');
-                    if (audio && !audio.paused) {
-                        audio.pause();
-                    }
-                }, 50);
+                const a = document.querySelector('audio');
+                if (a && !a.paused) { a.pause(); }
             """
             )
             ui.notify("🔇 Zvuk isključen", type="info")
         return new_state
-
     elif action == "auto_play":
-        # Za novi alarm - automatski enable + play + notification ako je bio isključen
+        # Za novi alarm – ako je bio isključen, uključi, i pusti
         if not sound_enabled:
             ui.notify("🔔 Novi alarm – zvuk ponovno uključen", type="warning")
         ui.run_javascript(
             """
-            setTimeout(() => {
-                const audio = document.querySelector('audio');
-                if (audio && audio.paused && window.audioReady && window.appInitialized) {
-                    audio.play().catch(e => console.log('Audio play failed:', e));
-                }
-            }, 50);
+            const a = document.querySelector('audio');
+            if (a && a.paused) { a.play().catch(()=>{}); }
         """
         )
-        return True  # Zvuk je sada omogućen
-
-    return sound_enabled  # Vrati postojeću vrijednost ako nema promjene
+        return True
+    return sound_enabled
 
 
 # ------------------ ALARM DISPLAY FUNCTION ------------------
 def prikazi_alarm(row: dict, container, update_callback):
     """Prikaži alarm kao UI element."""
     alarm_id = row["id"]
+    zone_id = row["zone_id"]
     zone_name = row["zone_name"]
     korisnik = row["korisnik"] or "NEPOZNAT"
     soba = row["soba"] or "N/A"
@@ -270,23 +305,39 @@ def prikazi_alarm(row: dict, container, update_callback):
                 )
 
                 def potvrdi_handler():
+                    """
+                    Handler za potvrdu alarma.
+                    1) Validira PIN i osoblje
+                    2) Označi alarm potvrđenim
+                    3) (DODANO) Spusti zonu: alarm_status=0, last_updated=NOW
+                    4) (opcionalno) postavi comm flag za stvarni reset centrale
+                    5) Refresh UI
+                    """
+                    # 1) Validira PIN i osoblje
                     pin = pin_input.value.strip()
                     if not validan_pin(pin):
                         ui.notify("⚠️ Neispravan PIN!", type="negative")
                         return
                     osoblje = validiraj_osoblje(pin)
-                    if osoblje:
-                        potvrdi_alarm(alarm_id, osoblje[1])
-                        set_comm_flag("resetAlarm", 1)
-                        ui.notify(f"✔️ Alarm potvrđen od: {osoblje[1]}", type="positive")
-                        # Pozovi update callback za instant refresh
-                        if update_callback:
-                            update_callback()
-                    else:
+                    if not osoblje:
                         ui.notify(
                             "❌ Neispravan PIN ili neaktivno osoblje!", type="negative"
                         )
+                        return
 
+                    # 2) Označi alarm potvrđenim
+                    potvrdi_alarm(alarm_id, osoblje[1])
+                    # 3) Spusti zonu u stanje OK
+                    reset_zone_alarm(zone_id)
+                    # 4) Postavi comm flag za reset centrale
+                    set_comm_flag("resetAlarm", 1)
+
+                    ui.notify(f"✔️ Alarm potvrđen od: {osoblje[1]}", type="positive")
+                    # 5) Refresh UI
+                    if update_callback:
+                        update_callback()
+
+                # Pin input enter key triggers confirmation
                 ui.button("POTVRDI", on_click=potvrdi_handler).props(
                     "flat unelevated"
                 ).classes(
@@ -297,136 +348,97 @@ def prikazi_alarm(row: dict, container, update_callback):
 # ------------------ MAIN PAGE ------------------
 @ui.page("/")
 def main_page():
+    last_alarm_ids: set[int] = set()
+    sound_enabled = True
 
-    last_alarm_ids = set()  # Track displayed alarms to avoid unnecessary updates
-    last_render_time = datetime.min  # Track last full render time
-    sound_enabled = True  # Lokalna varijabla umjesto globalne
-    initialization_complete = False  # Flag za potpunu inicijalizaciju
-
-    # Background sound element (hidden) - s boljim error handling
+    # Skriveni audio (pretpostavljaš da je SOUND_FILE definiran)
     ui.audio(SOUND_FILE).props("loop controls=false").classes("hidden")
 
-    def toggle_sound_handler():
-        nonlocal sound_enabled
-        # Samo ako je inicijalizacija završena
-        if initialization_complete:
+    # Header (sat + naslov + mute)
+    with ui.row().classes(
+        "max-w-full items-center justify-between w-full mb-3 text-white"
+    ):
+        time_lbl = ui.label("").classes("bg-gray-800 rounded-lg px-3 py-1")
+
+        def _upd_time():
+            from datetime import datetime
+
+            now = datetime.now()
+            time_lbl.text = f'{now.strftime("%d.%m.%Y")} 🕒 {now.strftime("%H:%M")}'
+
+        _upd_time()
+        ui.timer(60, _upd_time)
+
+        ui.label("🔔 AKTIVNI ALARMI - DOM BUZIN").classes(
+            "bg-gray-800 rounded-lg px-3 py-1"
+        )
+
+        def _toggle_sound():
+            nonlocal sound_enabled
             sound_enabled = control_sound("toggle", sound_enabled)
 
-    # Header with current time and title
-    with ui.row().classes(
-        "text-sm sm:text-base lg:text-lg max-w-full flex-nowrap font-mono text-white items-center justify-between w-full mb-2 sm:mb-4 whitespace-nowrap"
-    ):
-        current_time_label = ui.label("").classes(
-            "bg-gray-800 rounded-lg sm:rounded-xl p-1 sm:p-2"
-        )
-
-        def update_time_label():
-            now = datetime.now()
-            current_time_label.text = (
-                f' {now.strftime("%d.%m.%Y")} 🕒 {now.strftime("%H:%M")}'
-            )
-
-        ui.timer(60.0, update_time_label)
-        update_time_label()
-
-        ui.label("🔔 AKTIVNI ALARMI - DOM BUZIN sustav nadzora korisnika 🔔").classes(
-            "text-center bg-gray-800 p-1 sm:p-2 rounded-lg sm:rounded-xl"
-        )
-
-        ui.button(icon="volume_off", on_click=toggle_sound_handler).props(
+        ui.button(icon="volume_off", on_click=_toggle_sound).props(
             "flat unelevated"
-        ).classes("bg-gray-800 rounded-lg sm:rounded-xl text-white hover:bg-gray-700")
+        ).classes("bg-gray-800 rounded-lg text-white hover:bg-gray-700")
 
-    # -------------- Container for alarm list ------------------
-    alarm_list_container = ui.column().classes("w-full")
+    # Glavni kontejner za listu alarma
+    container = ui.column().classes("w-full")
 
-    def initialize_app():
-        """Inicijalizacija aplikacije s delay-om za tablet"""
-        nonlocal initialization_complete
+    def render_empty():
+        container.clear()
+        with container:
+            with ui.card().classes(
+                "w-full h-screen flex items-center justify-center bg-black"
+            ):
+                ui.label(
+                    "⚠️ PAŽNJA!\n\n"
+                    "Ovaj uređaj je dio sustava za nadzor korisnika.\n"
+                    "Namijenjen je isključivo ovlaštenom osoblju doma.\n\n"
+                    "📵 Molimo korisnike, posjetitelje i treće osobe: ne dirajte tablet.\n\n"
+                    "Bilo kakva neovlaštena uporaba može uzrokovati prekid rada sustava.\n\n"
+                    "Hvala na razumijevanju.\nVaš Dom"
+                ).classes(
+                    "text-center text-green-900 whitespace-pre-line p-4 text-xl font-bold leading-loose"
+                )
 
-        # Kratka pauza da se sve učita
-        ui.run_javascript(
-            """
-            setTimeout(() => {
-                window.appInitialized = true;
-                console.log('App initialization complete');
-            }, 300);
-        """
-        )
+    # Jedan “tick” koji radi sve
+    def tick():
+        nonlocal last_alarm_ids, sound_enabled
 
-        initialization_complete = True
-
-    def update_alarms():
-        nonlocal last_alarm_ids, last_render_time, sound_enabled
-
-        # Preskači ako init nije završen
-        if not initialization_complete:
-            return
-
-        # 💓 Postavi heartbeat za monitoring
+        # 1) heartbeat + kreiraj alarme iz zona
         set_kiosk_heartbeat()
+        check_and_create_alarms()
 
+        # 2) učitaj aktivne alarme
         df = get_aktivni_alarms()
-        current_ids = set(df["id"].tolist())
-        now = datetime.now()
+        current_ids = set(df["id"].tolist()) if not df.empty else set()
 
-        # 1. Detektiraj je li došao novi alarm
-        novi_alarm = not current_ids.issubset(last_alarm_ids)
-
-        # 2. Nema aktivnih alarma
-        if df.empty:
-            if current_ids == last_alarm_ids:
-                return  # ništa novo, ništa za prikazati
-
+        # 3) prikaži
+        if not current_ids:
+            # nema aktivnih → pauziraj zvuk + prazan ekran ako je promjena
+            if last_alarm_ids != current_ids:
+                control_sound("pause", sound_enabled)
+                render_empty()
             last_alarm_ids = current_ids
-            last_render_time = now
-            alarm_list_container.clear()
-            control_sound("pause", sound_enabled)
-
-            with alarm_list_container:
-                with ui.card().classes(
-                    "w-full h-screen flex items-center justify-center bg-black"
-                ):
-                    ui.label(
-                        "⚠️ PAŽNJA!\n\n"
-                        "Ovaj uređaj je dio sustava za nadzor korisnika.\n"
-                        "Namijenjen je isključivo ovlaštenom osoblju doma.\n\n"
-                        "📵 Molimo korisnike, posjetitelje i treće osobe:\n"
-                        "ne dirajte tablet.\n\n"
-                        "Bilo kakva neovlaštena uporaba može uzrokovati\n"
-                        "prekid rada sustava.\n\n"
-                        "Hvala na razumijevanju.\n"
-                        "Vaš Dom"
-                    ).classes(
-                        "text-center text-green-900 whitespace-pre-line p-2 sm:p-4 text-lg sm:text-xl lg:text-2xl font-bold leading-loose rounded-lg sm:rounded-2xl shadow-xl sm:shadow-2xl"
-                    )
             return
 
-        # 3. Prikaži alarme (ako su novi ili je vrijeme za osvježenje)
-        if current_ids != last_alarm_ids or (now - last_render_time >= RENDER_INTERVAL):
-            alarm_list_container.clear()
+        # ima aktivnih → re-render samo kad se promijenilo
+        novi_alarm = not current_ids.issubset(last_alarm_ids)
+        if current_ids != last_alarm_ids:
+            container.clear()
             for _, row in df.iterrows():
-                prikazi_alarm(row, alarm_list_container, update_alarms)
-
-            last_render_time = now
+                prikazi_alarm(row, container, tick)  # koristi tvoju postojeću funkciju
             last_alarm_ids = current_ids
 
-            # 4. Pali zvuk SAMO ako je novi alarm
-            if novi_alarm:
-                sound_enabled = control_sound("auto_play", sound_enabled)
+        # 4) zvuk: pusti samo kad je došao novi
+        if novi_alarm:
+            sound_enabled = control_sound("auto_play", sound_enabled)
 
-    def initial_setup():
-        """Početni setup nakon inicijalizacije"""
-        if not get_aktivni_alarms().empty:
-            control_sound("play", sound_enabled)
-        else:
-            control_sound("pause", sound_enabled)
-        update_alarms()
+    # Jedan jedini periodički timer
+    ui.timer(REFRESH_INTERVAL, tick)
 
-    # MODIFIED: Postupna inicijalizacija s delay-om
-    ui.timer(0.5, initialize_app, once=True)  # 500ms delay za init
-    ui.timer(1.0, initial_setup, once=True)  # 1 sekunda za initial setup
-    ui.timer(REFRESH_INTERVAL, update_alarms)  # Normalni timer
+    # inicijalni prikaz odmah
+    tick()
 
 
 # ------------------ MOBILE CSS FIXES ------------------
@@ -455,60 +467,9 @@ ui.add_head_html(
     }
   }
 </style>
-
-<script>
-  // Audio state tracking za race condition zaštitu
-  window.audioReady = false;
-  window.appInitialized = false;
-  
-  // Tablet detection i dodatni safety
-  const isTablet = /tablet|ipad|playbook|silk/i.test(navigator.userAgent);
-  
-  document.addEventListener('DOMContentLoaded', () => {
-    const audio = document.querySelector('audio');
-    if (audio) {
-      // Setup audio event listeners
-      audio.addEventListener('canplaythrough', () => {
-        window.audioReady = true;
-        console.log('Audio ready for playback');
-      });
-      
-      audio.addEventListener('loadeddata', () => {
-        window.audioReady = true;
-        console.log('Audio data loaded');
-      });
-      
-      audio.addEventListener('error', (e) => {
-        console.log('Audio error:', e);
-        window.audioReady = false;
-      });
-      
-      // Force load audio
-      audio.load();
-      
-      // Tablet specific handling
-      if (isTablet) {
-        setTimeout(() => {
-          console.log('Tablet audio initialization complete');
-          window.audioReady = true;
-        }, 1000);
-      }
-    }
-  });
-  
-  // Backup audio ready checker
-  setTimeout(() => {
-    if (!window.audioReady) {
-      const audio = document.querySelector('audio');
-      if (audio && audio.readyState >= 2) {
-        window.audioReady = true;
-        console.log('Audio ready (backup check)');
-      }
-    }
-  }, 2000);
-</script>
 """
 )
+
 
 # ------------------ APPLICATION STARTUP ------------------
 ui.run(title="Alarm Kiosk", reload=False, dark=True, port=8080)
