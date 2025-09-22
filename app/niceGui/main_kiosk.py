@@ -114,6 +114,7 @@ def validan_pin(pin: str, duljina: int = 4) -> bool:
 
 
 def set_comm_flag(key: str, value: int = 1):
+    """Postavi ili ažuriraj comm flag u bazi podataka."""
     with get_connection() as conn:
         conn.execute(
             """
@@ -133,6 +134,7 @@ def set_kiosk_heartbeat():
 
 
 def get_zadnji_potvrdjeni_alarm_korisnika(korisnik: str) -> dict | None:
+    """Vrati zadnji potvrđeni alarm za korisnika ili None ako nema."""
     with get_connection() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -156,6 +158,7 @@ def get_zadnji_potvrdjeni_alarm_korisnika(korisnik: str) -> dict | None:
 
 
 def get_aktivni_alarms() -> pd.DataFrame:
+    """Vrati DataFrame s aktivnim (nepotvrđenim) alarmima, sortirano po vremenu opadajuće."""
     with get_connection() as conn:
         return pd.read_sql_query(
             """
@@ -169,6 +172,7 @@ def get_aktivni_alarms() -> pd.DataFrame:
 
 
 def validiraj_osoblje(pin: str) -> tuple | None:
+    """Provjeri PIN i vrati (id, ime) ako je validno, inače None."""
     with get_connection() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -183,6 +187,7 @@ def validiraj_osoblje(pin: str) -> tuple | None:
 
 
 def potvrdi_alarm(alarm_id: int, osoblje_ime: str):
+    """Označi alarm u tablici alarm kao potvrđen i upiši vrijeme potvrde i osoblje."""
     with get_connection() as conn:
         conn.execute(
             """

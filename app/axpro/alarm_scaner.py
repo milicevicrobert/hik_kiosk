@@ -17,6 +17,8 @@ TIME_FMT = "%Y-%m-%d %H:%M:%S"
 
 
 def _parse_ts(ts: str | None) -> datetime | None:
+    """Parsira timestamp iz baze u datetime objekt ili None ako nije moguće.
+    vraća datetime objekt ili non iz stringa u formatu TIME_FMT"""
     if not ts:
         return None
     try:
@@ -95,7 +97,6 @@ def update_zone_status(zona: dict):
                 )
 
         conn.commit()
-
 
 def get_comm_flag(key: str) -> int:
     """Dohvati vrijednost zastavice po ključu key iz comm tablice"""
