@@ -31,12 +31,15 @@ st.caption(
 )
 st.markdown("---")
 
+
 # ------------------ Pomoćne funkcije za bazu ------------------
 def connect():
     return sqlite3.connect(DB_PATH)
 
+
 def now_str():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
 
 def get_sve_zone(include_user=True) -> pd.DataFrame:
     """Dohvati sve zone, po želji s pridruženim korisnikom i sobom."""
@@ -68,6 +71,7 @@ def get_sve_zone(include_user=True) -> pd.DataFrame:
     except Exception as e:
         st.error(f"Greška pri dohvaćanju zona: {e}")
         return pd.DataFrame()
+
 
 def set_zone_alarm(zone_id: int, on: bool, set_time: bool = True) -> bool:
     """Uključi ili isključi alarm na jednoj zoni."""
@@ -113,6 +117,7 @@ def set_zone_alarm(zone_id: int, on: bool, set_time: bool = True) -> bool:
         st.error(f"Greška pri simulaciji alarma: {e}")
         return False
 
+
 def set_all_off() -> int:
     """Isključi sve alarme na svim zonama. Vraća broj pogođenih redaka."""
     try:
@@ -126,6 +131,7 @@ def set_all_off() -> int:
     except Exception as e:
         st.error(f"Greška pri gašenju svih zona: {e}")
         return 0
+
 
 def random_alarm_on_inactive() -> dict | None:
     """Uključi alarm na jednoj nasumičnoj zoni koja trenutačno nije aktivna."""
@@ -162,6 +168,7 @@ def random_alarm_on_inactive() -> dict | None:
         st.error(f"Greška pri nasumičnom paljenju alarma: {e}")
         return None
 
+
 def get_osobe_s_aktivnim() -> pd.DataFrame:
     """Popis osoba koje imaju barem jednu zonu u alarmu."""
     try:
@@ -182,6 +189,7 @@ def get_osobe_s_aktivnim() -> pd.DataFrame:
     except Exception as e:
         st.error(f"Greška pri dohvaćanju osoba s aktivnim zonama: {e}")
         return pd.DataFrame()
+
 
 def clear_alarms_by_user(korisnik_id: int) -> int:
     """Gasi sve alarme na zonama koje pripadaju odabranoj osobi. Vraća broj promijenjenih redaka."""
@@ -205,6 +213,7 @@ def clear_alarms_by_user(korisnik_id: int) -> int:
     except Exception as e:
         st.error(f"Greška pri gašenju alarma po osobi: {e}")
         return 0
+
 
 def get_aktivni_alarms_zapisi() -> pd.DataFrame:
     """
@@ -243,9 +252,16 @@ def get_aktivni_alarms_zapisi() -> pd.DataFrame:
         st.error(f"Greška pri dohvaćanju tablice alarms: {e}")
         return pd.DataFrame()
 
+
 # ------------------ Tabovi ------------------
 tab_sim, tab_overview, tab_alarms, tab_by_user, tab_tools = st.tabs(
-    ["🚨 Simulator", "📋 Pregled zona", "📡 Aktivni alarmi", "👤 Gašenje po osobi", "🛠️ Alati"]
+    [
+        "🚨 Simulator",
+        "📋 Pregled zona",
+        "📡 Aktivni alarmi",
+        "👤 Gašenje po osobi",
+        "🛠️ Alati",
+    ]
 )
 
 # ------------------ TAB Simulator ------------------
@@ -256,7 +272,9 @@ with tab_sim:
     if st.button("Pokreni nasumični alarm", type="primary", width="stretch"):
         res = random_alarm_on_inactive()
         if res:
-            st.success(f"Uključen alarm na zoni {res['zone_naziv']} ID {res['zone_id']}")
+            st.success(
+                f"Uključen alarm na zoni {res['zone_naziv']} ID {res['zone_id']}"
+            )
             st.rerun()
         else:
             st.warning("Nema slobodnih zona ili je došlo do pogreške.")
@@ -276,18 +294,28 @@ with tab_sim:
             key="sel_zone",
         )
 
-        if st.button("Uključi alarm na odabranoj zoni", type="primary", width="stretch"):
+        if st.button(
+            "Uključi alarm na odabranoj zoni", type="primary", width="stretch"
+        ):
             if set_zone_alarm(selected_zone_id, on=True, set_time=True):
                 st.success("Alarm uključen")
                 st.rerun()
 
-        if st.button("Isključi alarm na odabranoj zoni", type="secondary", width="stretch"):
+        if st.button(
+            "Isključi alarm na odabranoj zoni", type="secondary", width="stretch"
+        ):
             if set_zone_alarm(selected_zone_id, on=False):
                 st.success("Alarm isključen")
                 st.rerun()
 
         st.markdown("Automatsko gašenje nakon isteka vremena")
-        secs = st.number_input("Vrijeme do gašenja u sekundama", min_value=1, max_value=300, value=30, step=1)
+        secs = st.number_input(
+            "Vrijeme do gašenja u sekundama",
+            min_value=1,
+            max_value=300,
+            value=30,
+            step=1,
+        )
         if st.button("Uključi pa automatski isključi", width="stretch"):
             if set_zone_alarm(selected_zone_id, on=True, set_time=True):
                 st.info(f"Uključeno, gašenje za {secs} sekundi.")
@@ -371,7 +399,10 @@ with tab_by_user:
             f"{r.korisnik_ime} soba {r.soba} aktivno {r.broj_aktivnih_zona}"
             for _, r in df_osobe.iterrows()
         ]
-        mapa = {prikazi[i]: int(df_osobe.iloc[i]["korisnik_id"]) for i in range(len(prikazi))}
+        mapa = {
+            prikazi[i]: int(df_osobe.iloc[i]["korisnik_id"])
+            for i in range(len(prikazi))
+        }
         izbor = st.selectbox("Odaberi osobu", options=list(mapa.keys()))
         if st.button("Ugasi sve alarme odabrane osobe", width="stretch"):
             affected = clear_alarms_by_user(mapa[izbor])
@@ -384,7 +415,9 @@ with tab_tools:
 
     st.markdown("Uključi alarm na više nasumičnih zona")
     n = st.number_input("Broj zona", min_value=1, value=1, step=1)
-    if st.button("Uključi alarm na više nasumičnih zona", type="primary", width="stretch"):
+    if st.button(
+        "Uključi alarm na više nasumičnih zona", type="primary", width="stretch"
+    ):
         df_all = get_sve_zone(include_user=False)
         if df_all.empty:
             st.error("Nema zona.")
@@ -396,7 +429,11 @@ with tab_tools:
                 sample = df_inactive.sample(min(int(n), len(df_inactive)))
                 ok_cnt = 0
                 for _, r in sample.iterrows():
-                    ok_cnt += 1 if set_zone_alarm(int(r["zone_id"]), on=True, set_time=True) else 0
+                    ok_cnt += (
+                        1
+                        if set_zone_alarm(int(r["zone_id"]), on=True, set_time=True)
+                        else 0
+                    )
                 st.success(f"Uključeno na {ok_cnt} zona.")
                 st.rerun()
 

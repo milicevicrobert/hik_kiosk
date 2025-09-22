@@ -6,11 +6,22 @@ from datetime import datetime, timedelta
 from nice_config import DB_PATH, SOUND_FILE
 
 # ------------------ KONFIG ------------------
-REFRESH_INTERVAL = 2                # s: koliko često kiosk "ticka"
-COOLDOWN_SECONDS = 120              # s: koliko nakon potvrde NE kreiramo novi alarm za istu zonu
+REFRESH_INTERVAL = 2  # s: koliko često kiosk "ticka"
+COOLDOWN_SECONDS = 120  # s: koliko nakon potvrde NE kreiramo novi alarm za istu zonu
 TIME_FMT = "%Y-%m-%d %H:%M:%S"
 
+
+# helper: pretvori TEXT datum (TIME_FMT) u epoch int
+def _to_epoch(text_dt: str | None) -> int:
+    """Pretvori TEXT datum (TIME_FMT) u epoch int (broj sekundi od 1.1.1970. u obliku int)."""
+    try:
+        return int(datetime.strptime(text_dt, TIME_FMT).timestamp()) if text_dt else 0
+    except Exception:
+        return 0
+
+
 # ------------------ DB POMOĆNE ------------------
+
 
 def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
@@ -40,6 +51,7 @@ def set_kiosk_heartbeat():
 
 # ------------------ ALARM & ZONE LOGIKA ------------------
 
+
 def create_alarm_from_zone(zone_row: dict) -> None:
     """Unesi novi alarm u tablicu alarms na temelju zone."""
     with get_connection() as conn:
@@ -60,6 +72,7 @@ def create_alarm_from_zone(zone_row: dict) -> None:
 
 
 def get_aktivni_alarms() -> pd.DataFrame:
+    """Vrati sve aktivne alarme iz tablice alarms u bazi podataka."""
     with get_connection() as conn:
         return pd.read_sql_query(
             """
@@ -152,29 +165,38 @@ def check_and_create_alarms():
     """Za svaku zonu u alarmu, ako nema aktivnog alarma i nije u cooldownu – kreiraj novi alarm."""
     now_epoch = int(time.time())
     with get_connection() as conn:
+        # dohvatimo sve zone koje su u alarm_status = 1 iz zone tablice u dataframe zones_df
+        # i sve aktivne alarme iz alarms tablice u dataframe aktivni_df
         zones_df = pd.read_sql_query(
             """
-            SELECT id, naziv, alarm_status, korisnik_id,
+            SELECT id, naziv, alarm_status, korisnik_id, last_alarm_time,
                    COALESCE(cooldown_until_epoch, 0) AS cooldown_until_epoch
             FROM zone
             """,
             conn,
         )
-
         aktivni_df = pd.read_sql_query(
             "SELECT zone_id FROM alarms WHERE potvrda = 0",
             conn,
         )
+    # aktivni_zone_ids:set zone_id:int koje su u aktivni_df:dataframe
+    aktivni_zone_ids = (
+        set(aktivni_df["zone_id"].tolist()) if not aktivni_df.empty else set()
+    )
 
-    aktivni_zone_ids = set(aktivni_df["zone_id"].tolist()) if not aktivni_df.empty else set()
-
+    # za svaku zonu u zones_df:dataframe
     for _, row in zones_df.iterrows():
-        if int(row.get("alarm_status") or 0) != 1:
-            continue
+        last_alarm_time_epoch = _to_epoch(row.get("last_alarm_time"))
+        cooldown_epoch = int(row.get("cooldown_until_epoch") or 0)
+        alarm_status = int(row.get("alarm_status") or 0)
+        if alarm_status != 1:
+            continue  # zona nije u alarm_status = 1
         if row["id"] in aktivni_zone_ids:
-            continue
-        if int(row.get("cooldown_until_epoch") or 0) > now_epoch:
+            continue  # već postoji aktivni alarm za tu zonu
+        if cooldown_epoch > now_epoch:
             continue  # još traje cooldown nakon potvrde
+        if last_alarm_time_epoch <= cooldown_epoch:
+            continue  # zadnji stisnuti alarm je za vrijeme zadnjeg cooldowna
 
         # pokušaj dohvatiti korisnika/sobu prema korisnik_id
         korisnik = None
@@ -195,54 +217,69 @@ def check_and_create_alarms():
             except Exception:
                 pass
 
-        create_alarm_from_zone({
-            "id": row["id"],
-            "naziv": row["naziv"],
-            "korisnik": korisnik,
-            "soba": soba,
-        })
+        create_alarm_from_zone(
+            {
+                "id": row["id"],
+                "naziv": row["naziv"],
+                "korisnik": korisnik,
+                "soba": soba,
+            }
+        )
+
 
 # ------------------ AUDIO KONTROLA ------------------
 
+
 def control_sound(action: str, sound_enabled: bool | None = None):
     if action == "play" and sound_enabled:
-        ui.run_javascript("""
+        ui.run_javascript(
+            """
             const a = document.querySelector('audio');
             if (a && a.paused) { a.play().catch(()=>{}); }
-        """)
+        """
+        )
     elif action == "pause":
-        ui.run_javascript("""
+        ui.run_javascript(
+            """
             const a = document.querySelector('audio');
             if (a && !a.paused) { a.pause(); }
-        """)
+        """
+        )
     elif action == "toggle":
         new_state = not sound_enabled
         if new_state:
-            ui.run_javascript("""
+            ui.run_javascript(
+                """
                 const a = document.querySelector('audio');
                 if (a && a.paused) { a.play().catch(()=>{}); }
-            """)
+            """
+            )
             ui.notify("🔊 Zvuk uključen", type="warning")
         else:
-            ui.run_javascript("""
+            ui.run_javascript(
+                """
                 const a = document.querySelector('audio');
                 if (a && !a.paused) { a.pause(); }
-            """)
+            """
+            )
             ui.notify("🔇 Zvuk isključen", type="info")
         return new_state
     elif action == "auto_play":
         # kad dođe novi alarm, ponovno uključi i pusti
         if not sound_enabled:
             ui.notify("🔔 Novi alarm – zvuk ponovno uključen", type="warning")
-        ui.run_javascript("""
+        ui.run_javascript(
+            """
             const a = document.querySelector('audio');
             if (a && a.paused) { a.play().catch(()=>{}); }
-        """)
+        """
+        )
         return True
     return sound_enabled
 
 
 # ------------------ UI ELEMENT: PRIKAZ ALARMA ------------------
+
 
 def prikazi_alarm(row: dict, container, update_callback):
     alarm_id = row["id"]
@@ -263,16 +300,24 @@ def prikazi_alarm(row: dict, container, update_callback):
                 with ui.element("div").classes(
                     "grid grid-cols-[2fr_2fr_2fr_3fr] sm:grid-cols-[1fr_1fr_1fr_1.5fr] w-full gap-2 sm:gap-4 px-2 sm:px-4"
                 ):
-                    ui.label(f"🕒 {samo_vrijeme}").classes("text-sm sm:text-base lg:text-lg")
-                    ui.label(f"⏱️ {proteklo_teksta}").classes("text-sm sm:text-base lg:text-lg")
+                    ui.label(f"🕒 {samo_vrijeme}").classes(
+                        "text-sm sm:text-base lg:text-lg"
+                    )
+                    ui.label(f"⏱️ {proteklo_teksta}").classes(
+                        "text-sm sm:text-base lg:text-lg"
+                    )
                     ui.label(f"🛏️ {soba}").classes("text-sm sm:text-base lg:text-lg")
-                    ui.label(f"🧓 {korisnik}").classes("text-sm sm:text-base lg:text-lg")
+                    ui.label(f"🧓 {korisnik}").classes(
+                        "text-sm sm:text-base lg:text-lg"
+                    )
 
             zadnji = get_zadnji_potvrdjeni_alarm_korisnika(korisnik)
             with ui.row().classes("items-end justify-around w-full gap-2 sm:gap-4"):
                 if zadnji:
                     try:
-                        potvrda_vrijeme = datetime.strptime(zadnji["vrijemePotvrde"], TIME_FMT).strftime("%d.%m.%Y. %H:%M")
+                        potvrda_vrijeme = datetime.strptime(
+                            zadnji["vrijemePotvrde"], TIME_FMT
+                        ).strftime("%d.%m.%Y. %H:%M")
                     except Exception:
                         potvrda_vrijeme = zadnji["vrijemePotvrde"]
                     ui.label(
@@ -282,7 +327,9 @@ def prikazi_alarm(row: dict, container, update_callback):
                 pin_input = (
                     ui.input(label="PIN (4 znamenke)", password=True)
                     .props('type=number inputmode=numeric pattern="[0-9]*"')
-                    .classes("w-40 sm:w-60 font-semibold text-lg sm:text-xl lg:text-2xl")
+                    .classes(
+                        "w-40 sm:w-60 font-semibold text-lg sm:text-xl lg:text-2xl"
+                    )
                 )
 
                 def potvrdi_handler():
@@ -292,19 +339,30 @@ def prikazi_alarm(row: dict, container, update_callback):
                         return
                     osoblje = validiraj_osoblje(pin)
                     if not osoblje:
-                        ui.notify("❌ Neispravan PIN ili neaktivno osoblje!", type="negative")
+                        ui.notify(
+                            "❌ Neispravan PIN ili neaktivno osoblje!", type="negative"
+                        )
                         return
 
                     potvrdi_alarm(alarm_id, osoblje[1])
                     reset_zone_alarm(zone_id)
                     set_zone_cooldown(zone_id, COOLDOWN_SECONDS)
-                    set_comm_flag("resetAlarm", 1)
+
+                    # Resetiraj centralu tek kad NEMA više aktivnih alarma
+                    with get_connection() as conn:
+                        cur = conn.cursor()
+                        cur.execute("SELECT COUNT(*) FROM alarms WHERE potvrda = 0")
+                        active_count = cur.fetchone()[0]
+                    if int(active_count) == 0:
+                        set_comm_flag("resetAlarm", 1)
 
                     ui.notify(f"✔️ Alarm potvrđen od: {osoblje[1]}", type="positive")
                     if update_callback:
                         update_callback()
 
-                ui.button("POTVRDI", on_click=potvrdi_handler).props("flat unelevated").classes(
+                ui.button("POTVRDI", on_click=potvrdi_handler).props(
+                    "flat unelevated"
+                ).classes(
                     "bg-gray-800 rounded-lg sm:rounded-xl text-white hover:bg-gray-700 text-sm sm:text-base"
                 )
 
@@ -319,7 +377,9 @@ def main_page():
     ui.audio(SOUND_FILE).props("loop controls=false").classes("hidden")
 
     # header
-    with ui.row().classes("max-w-full items-center justify-between w-full mb-3 text-white"):
+    with ui.row().classes(
+        "max-w-full items-center justify-between w-full mb-3 text-white"
+    ):
         time_lbl = ui.label("").classes("bg-gray-800 rounded-lg px-3 py-1")
 
         def _upd_time():
@@ -329,22 +389,26 @@ def main_page():
         _upd_time()
         ui.timer(60, _upd_time)
 
-        ui.label("🔔 AKTIVNI ALARMI - DOM BUZIN").classes("bg-gray-800 rounded-lg px-3 py-1")
+        ui.label("🔔 AKTIVNI ALARMI - DOM BUZIN").classes(
+            "bg-gray-800 rounded-lg px-3 py-1"
+        )
 
         def _toggle_sound():
             nonlocal sound_enabled
             sound_enabled = control_sound("toggle", sound_enabled)
 
-        ui.button(icon="volume_off", on_click=_toggle_sound).props("flat unelevated").classes(
-            "bg-gray-800 rounded-lg text-white hover:bg-gray-700"
-        )
+        ui.button(icon="volume_off", on_click=_toggle_sound).props(
+            "flat unelevated"
+        ).classes("bg-gray-800 rounded-lg text-white hover:bg-gray-700")
 
     container = ui.column().classes("w-full")
 
     def render_empty():
         container.clear()
         with container:
-            with ui.card().classes("w-full h-screen flex items-center justify-center bg-black"):
+            with ui.card().classes(
+                "w-full h-screen flex items-center justify-center bg-black"
+            ):
                 ui.label(
                     "⚠️ PAŽNJA!\n\n"
                     "Ovaj uređaj je dio sustava za nadzor korisnika.\n"
@@ -352,7 +416,9 @@ def main_page():
                     "📵 Molimo korisnike, posjetitelje i treće osobe: ne dirajte tablet.\n\n"
                     "Bilo kakva neovlaštena uporaba može uzrokovati prekid rada sustava.\n\n"
                     "Hvala na razumijevanju.\nVaš Dom"
-                ).classes("text-center text-green-900 whitespace-pre-line p-4 text-xl font-bold leading-loose")
+                ).classes(
+                    "text-center text-green-900 whitespace-pre-line p-4 text-xl font-bold leading-loose"
+                )
 
     def tick():
         nonlocal last_alarm_ids, sound_enabled
