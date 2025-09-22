@@ -34,6 +34,7 @@ REQUIRED_TABLES = {
         "alarm_status",
         "last_updated",
         "last_alarm_time",
+        "cooldown_until_epoch",
     },
     "alarms": {
         "id",
@@ -128,7 +129,8 @@ def init_database(db_file=DB_PATH):
                     korisnik_id INTEGER,
                     alarm_status INTEGER DEFAULT 0,
                     last_updated TEXT DEFAULT NULL,
-                    last_alarm_time TEXT DEFAULT NULL
+                    last_alarm_time TEXT DEFAULT NULL,
+                    cooldown_until_epoch INTEGER DEFAULT 0
 
                 )
                 """
@@ -198,6 +200,7 @@ def ensure_table_columns(conn, table_name, required_columns):
         "osoblje": "TEXT",
         "key": "TEXT",
         "value": "INTEGER DEFAULT 0",
+        "cooldown_until_epoch": "INTEGER DEFAULT 0"
     }
 
     for col in required_columns - existing_columns:

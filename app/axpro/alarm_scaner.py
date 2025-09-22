@@ -1,228 +1,330 @@
 """
-alarm_scaner.py je skripta koja kontinuirano skenira AX PRO centralu
-za aktivne alarme i ažurira lokalnu SQLite bazu podataka.
-Također obrađuje zahtjeve za resetiranje alarma i održava heartbeat za monitoring.
+alarm_scanner.py
+----------------
+Kontinuirano čita HIKVISION AX PRO centralu i zrcali stanje u SQLite tablici `zone`.
+- Poll svakih 10s (idle), burst nakon promjene (3 brza polla po ~0.5s).
+- Odmah nakon uspješnog reseta radi dodatni poll.
+- Upsert zona (INSERT ako ne postoji, UPDATE ako postoji).
+- last_alarm_time se postavlja SAMO na prijelazu 0->1.
+- last_updated se ažurira na svakom čitanju (ping).
+- cooldown_until_epoch se resetira kad zona padne 1->0 (podrška kiosku).
+- WAL + busy_timeout za stabilan rad paralelno s NiceGUI kioskom.
 
+Ovisnosti:
+- ax_config.DB_PATH
+- axpro_auth.login_axpro, get_zone_status, clear_axpro_alarms
 """
 
-import time
 import os
+import time
+import random
 import sqlite3
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
+
 from ax_config import DB_PATH
-from datetime import datetime, timedelta
 from axpro_auth import login_axpro, get_zone_status, clear_axpro_alarms
 
-VRIJEME_DO_PONOVNOG_ALARMA = 120  # sekundi (2 min)
+# ------------------ KONFIG ------------------
+
 TIME_FMT = "%Y-%m-%d %H:%M:%S"
 
+POLL_IDLE_SEC = 10          # osnovni poll
+POLL_ACTIVE_SEC = 10        # može ostati 10s (želiš štedjeti mrežu)
+BURST_POLLS = 3             # broj brzih polla nakon promjene
+BURST_SLEEP_SEC = 0.5       # razmak u burstu
 
-def _parse_ts(ts: str | None) -> datetime | None:
-    """Parsira timestamp iz baze u datetime objekt ili None ako nije moguće.
-    vraća datetime objekt ili non iz stringa u formatu TIME_FMT"""
-    if not ts:
-        return None
-    try:
-        return datetime.strptime(ts, TIME_FMT)
-    except Exception:
-        return None
+LOGIN_MAX_ATTEMPTS = 5
+LOGIN_RETRY_SLEEP_SEC = 5
+LOGIN_COOLDOWN_AFTER_MAX = 30
 
+BUSY_TIMEOUT_MS = 3000      # SQLite busy timeout
+HEARTBEAT_KEY = "scanner_heartbeat"
+RESET_FLAG_KEY = "resetAlarm"
 
-def _proslo_dovoljno(last_updated_str: str | None) -> bool:
-    """True ako je prošlo barem VRIJEME_DO_PONOVNOG_ALARMA od last_updated."""
-    last_upd = _parse_ts(last_updated_str)
-    if last_upd is None:
-        return True  # ako nemamo podatak, ne koči
-    return (datetime.now() - last_upd) >= timedelta(seconds=VRIJEME_DO_PONOVNOG_ALARMA)
+# Ako želiš globalni jitter kako se poll ne bi “poklopio” s drugim sustavima:
+JITTER_IDLE_SEC = 0.2
+JITTER_ACTIVE_SEC = 0.2
 
 
-def update_zone_status(zona: dict):
-    """
-    Ažuriraj status zone u tablici zone.
-    Ako zona prelazi iz 0 u 1, postavi last_alarm_time, ali SAMO ako je prošlo
-    barem VRIJEME_DO_PONOVNOG_ALARMA od zadnjeg last_updated (debounce).
-    Poziva se samo za zone koje su u alarmnom stanju.
-    """
-    zone_id = zona.get("id")
-    zone_name = zona.get("name")
-    alarm_active = zona.get("alarm", False)
-    now = datetime.now().strftime(TIME_FMT)
+# ------------------ DB POMOĆNE ------------------
 
-    with sqlite3.connect(DB_PATH) as conn:
-        cur = conn.cursor()
-        # Treba nam i last_updated radi debounce odluke
-        cur.execute(
-            "SELECT alarm_status, last_updated FROM zone WHERE id = ?", (zone_id,)
-        )
-        row = cur.fetchone()
-        old_status = row[0] if row else 0
-        last_updated_db = row[1] if row else None
+def get_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    # Stabilnost s paralelnim upisima/čitanjima (kiosk + skener)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS};")
+    return conn
 
-        if alarm_active:
-            if not old_status:
-                # Pokušaj prelaza 0 -> 1 uz debounce provjeru
-                if _proslo_dovoljno(last_updated_db):
-                    cur.execute(
-                        """
-                        UPDATE zone SET
-                            naziv = ?,
-                            alarm_status = 1,
-                            last_updated = ?,
-                            last_alarm_time = ?
-                        WHERE id = ?
-                        """,
-                        (zone_name, now, now, zone_id),
-                    )
-                    print(
-                        f"🔄 Zona {zone_id} ({zone_name}) status: ALARM (debounce OK)"
-                    )
-                else:
-                    # PREVAŽNO: NE diraj last_updated kada blokiraš, jer bi “vječno” prolongirao alarm
-                    # eventualno možeš samo ažurirati naziv bez last_updated
-                    cur.execute(
-                        "UPDATE zone SET naziv = ? WHERE id = ?",
-                        (zone_name, zone_id),
-                    )
-                    print(f"⏳ Zona {zone_id} ({zone_name}) ALARM ignoriran (debounce)")
-            else:
-                # Već smo u ALARM=1 → samo refresh naziva i last_updated
-                cur.execute(
-                    """
-                    UPDATE zone SET
-                        naziv = ?,
-                        alarm_status = 1,
-                        last_updated = ?
-                    WHERE id = ?
-                    """,
-                    (zone_name, now, zone_id),
-                )
 
-        conn.commit()
-
-def get_comm_flag(key: str) -> int:
-    """Dohvati vrijednost zastavice po ključu key iz comm tablice"""
-    with sqlite3.connect(DB_PATH) as conn:
+def comm_get(key: str, default: int = 0) -> int:
+    with get_conn() as conn:
         cur = conn.cursor()
         cur.execute("SELECT value FROM comm WHERE key = ?", (key,))
         row = cur.fetchone()
-        return int(row[0]) if row else 0
+        return int(row[0]) if row and row[0] is not None else default
 
 
-def set_comm_flag(key: str, value: int = 0):
-    """Postavi vrijednost zastavice po ključu key u comm tablici"""
-    with sqlite3.connect(DB_PATH) as conn:
+def comm_set(key: str, value: int) -> None:
+    with get_conn() as conn:
         conn.execute(
             """
             INSERT INTO comm (key, value)
             VALUES (?, ?)
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
-        """,
+            """,
             (key, value),
         )
         conn.commit()
 
 
-def resetiraj_alarme_uvjetno(cookie) -> bool:
+def set_heartbeat() -> None:
+    comm_set(HEARTBEAT_KEY, int(time.time()))
+
+
+# ------------------ ZONE AŽURIRANJE ------------------
+
+def _now_str() -> str:
+    return datetime.now().strftime(TIME_FMT)
+
+
+def upsert_zone_state(zone_id: int,
+                      zone_name: str,
+                      alarm_active: bool) -> Tuple[bool, bool]:
     """
-    Resetiraj alarme na AX PRO centrali ako je zastavica 'resetAlarm' postavljena na 1.
-    Vraća True ako je reset izvršen, False inače.
+    Upsert zone:
+    - Ako je prijelaz 0->1: postavi alarm_status=1, last_updated=now i last_alarm_time=now.
+    - Ako je 1->1: osvježi last_updated=now (ping).
+    - Ako je 1->0: postavi alarm_status=0, last_updated=now i cooldown_until_epoch=0.
+    - Ako je 0->0: samo osvježi naziv (nije nužno, ali ostaje dosljedno).
+
+    Vraća (changed, new_status_is_1).
     """
-    if get_comm_flag("resetAlarm") == 1:
-        try:
-            print("🔁 Resetiranje alarma...")
-            status, response = clear_axpro_alarms(cookie)
-            set_comm_flag("resetAlarm", 0)
-            print("✅ Alarmi resetirani")
-            return True
-        except Exception as e:
-            print(f"❌ Greška resetiranja: {e}")
-            return False
+    now = _now_str()
+    changed = False
+    new_is_1 = bool(alarm_active)
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT alarm_status FROM zone WHERE id = ?", (zone_id,))
+        row = cur.fetchone()
+        old_status = int(row[0]) if row else 0
+
+        if alarm_active:
+            if old_status == 0:
+                # 0 -> 1
+                cur.execute(
+                    """
+                    UPDATE zone
+                    SET naziv=?, alarm_status=1, last_updated=?, last_alarm_time=?
+                    WHERE id=?
+                    """,
+                    (zone_name, now, now, zone_id),
+                )
+                if cur.rowcount == 0:
+                    cur.execute(
+                        """
+                        INSERT INTO zone (id, naziv, alarm_status, last_updated, last_alarm_time)
+                        VALUES (?, ?, 1, ?, ?)
+                        """,
+                        (zone_id, zone_name, now, now),
+                    )
+                changed = True
+            else:
+                # 1 -> 1 (ping + naziv)
+                cur.execute(
+                    """
+                    UPDATE zone
+                    SET naziv=?, alarm_status=1, last_updated=?
+                    WHERE id=?
+                    """,
+                    (zone_name, now, zone_id),
+                )
+        else:
+            if old_status == 1:
+                # 1 -> 0 (spusti + resetiraj cooldown kioska, ako se koristi)
+                cur.execute(
+                    """
+                    UPDATE zone
+                    SET naziv=?, alarm_status=0, last_updated=?, cooldown_until_epoch=0
+                    WHERE id=?
+                    """,
+                    (zone_name, now, zone_id),
+                )
+                changed = True
+            else:
+                # 0 -> 0 (osvježi naziv po želji)
+                cur.execute(
+                    "UPDATE zone SET naziv=? WHERE id=?",
+                    (zone_name, zone_id),
+                )
+                if cur.rowcount == 0:
+                    cur.execute(
+                        "INSERT INTO zone (id, naziv, alarm_status, last_updated) VALUES (?, ?, 0, ?)",
+                        (zone_id, zone_name, now),
+                    )
+
+        conn.commit()
+
+    return changed, new_is_1
 
 
-def set_heartbeat():
-    """Postavi heartbeat timestamp za monitoring"""
-    current_timestamp = int(time.time())
-    set_comm_flag("scanner_heartbeat", current_timestamp)
+# ------------------ AX PRO POMOĆNE ------------------
 
-
-def run_scanner():
-    print("🚀 AX PRO Scanner pokrenut")
-    cookie = None
-    connection_attempts = 0
+def do_login_with_retries() -> Optional[Any]:
+    attempts = 0
     while True:
         try:
-            set_heartbeat()
-            if cookie is None:
-                # Pokušaj login ako nemamo cookie ako imamo cookie, koristimo postojeći
-                connection_attempts += 1
-                try:
-                    cookie = login_axpro()
-                    print("✅ Povezan s AX PRO centralom")
-                    connection_attempts = 0
-                except Exception as login_error:
-                    if connection_attempts >= 5:
-                        print(f"❌ Previše neuspješnih pokušaja. Čekam 30s...")
-                        time.sleep(30)
-                        connection_attempts = 0
-                    else:
-                        print(f"❌ Login neuspješan ({connection_attempts}/5)")
-                        time.sleep(5)
-                    continue
-
-            # Ako imamo cookie, nastavljamo s provjerom i skeniranjem
-            reset_izvrsen = False
-            try:
-                reset_izvrsen = resetiraj_alarme_uvjetno(cookie)
-            except Exception as reset_error:
-                print(f"❌ Greška resetiranja: {reset_error}")
-
-            if not reset_izvrsen:
-                try:
-                    data = get_zone_status(cookie)
-                    zones = data.get("ZoneList", [])
-
-                    for entry in zones:
-                        zona = entry["Zone"]
-                        # Provjeri je li zona u alarmnom stanju ako jest vraća True inače False
-                        if zona.get("alarm", False):
-                            # Unesi ili ažuriraj alarm u tablici zona samo ako je u alarmnom stanju
-                            update_zone_status(zona)
-
-                except Exception as scan_error:
-                    print(f"❌ Greška skeniranja: {scan_error}")
-                    cookie = None
-
-        except KeyboardInterrupt:
-            print("\n🛑 Scanner zaustavljen")
-            break
+            return login_axpro()
         except Exception as e:
-            print(f"❌ Neočekivana greška: {e}")
-            cookie = None
+            attempts += 1
+            print(f"[login] ❌ Neuspjeh ({attempts}/{LOGIN_MAX_ATTEMPTS}): {e}")
+            if attempts >= LOGIN_MAX_ATTEMPTS:
+                print(f"[login] ⏳ Hladim {LOGIN_COOLDOWN_AFTER_MAX}s...")
+                time.sleep(LOGIN_COOLDOWN_AFTER_MAX)
+                attempts = 0
+            else:
+                time.sleep(LOGIN_RETRY_SLEEP_SEC)
 
-        time.sleep(5)  # Pauza između skeniranja
+
+def poll_zones(cookie: Any) -> List[Dict[str, Any]]:
+    """
+    Vraća listu dictova: [{ 'id': int, 'name': str, 'alarm': bool }, ...]
+    Oslanja se na axpro_auth.get_zone_status(cookie) -> dict s 'ZoneList'.
+    """
+    data = get_zone_status(cookie)
+    zones = data.get("ZoneList", [])
+    out: List[Dict[str, Any]] = []
+    for entry in zones:
+        z = entry.get("Zone", {})
+        # očekuje se da axpro_auth već normalizira polja
+        out.append({
+            "id": int(z.get("id")),
+            "name": str(z.get("name", "")),
+            "alarm": bool(z.get("alarm", False)),
+        })
+    return out
 
 
-if __name__ == "__main__":
-    print("🚀 HIKVision AX PRO Scanner")
-    print("=" * 40)
+# ------------------ RESET OBRADA ------------------
+
+def process_reset_if_requested(cookie: Any) -> bool:
+    """
+    Ako je RESET flag postavljen, pokuša resetirati centralu i vratiti flag na 0.
+    Vraća True ako je reset odrađen (uspješno pozvan), False inače.
+    """
+    if comm_get(RESET_FLAG_KEY, 0) != 1:
+        return False
 
     try:
-        from axpro_auth import HOST, USERNAME, PASSWORD
+        print("[reset] 🔁 Pokrećem reset na centrali...")
+        status, response = clear_axpro_alarms(cookie)
+        # status može biti bool ili kod; pretpostavimo da iznimka znači fail
+        comm_set(RESET_FLAG_KEY, 0)
+        print("[reset] ✅ Reset zatražen i flag vraćen na 0")
+        return True
+    except Exception as e:
+        print(f"[reset] ❌ Greška resetiranja: {e}")
+        # flag ostaje 1 pa će se pokušati ponovno u idućem ciklusu
+        return False
 
-        print(f"📋 AX PRO: {HOST}, User: {USERNAME}")
-        print(f"📋 Database: {DB_PATH}")
-    except ImportError as e:
-        print(f"❌ Konfiguracija: {e}")
-        exit(1)
 
+# ------------------ GLAVNA PETLJA ------------------
+
+def run_scanner() -> None:
     if not os.path.exists(DB_PATH):
-        print(f"❌ Baza ne postoji: {DB_PATH}")
-        exit(1)
+        raise FileNotFoundError(f"Baza ne postoji: {DB_PATH}")
 
-    print("=" * 40)
+    print("🚀 AX PRO Alarm Scanner")
+    print(f"📋 DB: {DB_PATH}")
+    cookie: Optional[Any] = None
+
+    while True:
+        set_heartbeat()
+
+        # Osiguraj login
+        if cookie is None:
+            cookie = do_login_with_retries()
+            print("[login] ✅ Autoriziran (cookie dobiven)")
+
+        # 1) Reset ako je zatražen
+        reset_done = process_reset_if_requested(cookie)
+        if reset_done:
+            # odmah dodatni poll nakon reseta (ne čekamo interval)
+            try:
+                zones = poll_zones(cookie)
+                changed_any = False
+                any_active = False
+                for z in zones:
+                    changed, is_1 = upsert_zone_state(z["id"], z["name"], z["alarm"])
+                    changed_any = changed_any or changed
+                    any_active = any_active or is_1
+                if changed_any:
+                    _do_burst(cookie)
+            except Exception as e:
+                print(f"[scan] ❌ Greška nakon reseta, ponovno ću se logirati: {e}")
+                cookie = None
+            # nakon reseta, nastavi uobičajen ciklus spavanja niže
+
+        else:
+            # 2) Standardni poll
+            try:
+                zones = poll_zones(cookie)
+                changed_any = False
+                any_active = False
+                for z in zones:
+                    changed, is_1 = upsert_zone_state(z["id"], z["name"], z["alarm"])
+                    changed_any = changed_any or changed
+                    any_active = any_active or is_1
+
+                if changed_any:
+                    _do_burst(cookie)
+
+                # odredi interval (po tvojoj želji oba su 10s)
+                interval = POLL_ACTIVE_SEC if any_active else POLL_IDLE_SEC
+                # jitter
+                interval += random.uniform(-JITTER_ACTIVE_SEC if any_active else -JITTER_IDLE_SEC,
+                                           JITTER_ACTIVE_SEC if any_active else JITTER_IDLE_SEC)
+                if interval < 0.2:
+                    interval = 0.2
+
+            except Exception as e:
+                print(f"[scan] ❌ Greška skeniranja ({e}), invalidiram cookie...")
+                cookie = None
+                # blagi backoff da izbjegnemo spam
+                interval = 3.0
+
+            time.sleep(interval)
+
+
+def _do_burst(cookie: Any) -> None:
+    """Kratki burst bržih polla nakon promjene stanja kako bi kiosk brže pokupio novost."""
+    for i in range(BURST_POLLS):
+        try:
+            zones = poll_zones(cookie)
+            for z in zones:
+                upsert_zone_state(z["id"], z["name"], z["alarm"])
+        except Exception as e:
+            print(f"[burst] ❌ Greška burst polla: {e}")
+            break
+        time.sleep(BURST_SLEEP_SEC)
+
+
+# ------------------ MAIN ------------------
+
+if __name__ == "__main__":
+    try:
+        print("=" * 42)
+        from axpro_auth import HOST, USERNAME  # samo za info ispisa
+        print(f"📡 AX PRO: {HOST} (user: {USERNAME})")
+        print("=" * 42)
+    except Exception:
+        pass
 
     try:
         run_scanner()
     except KeyboardInterrupt:
-        print("\n🛑 Gotovo")
+        print("\n🛑 Zaustavljeno")
     except Exception as e:
         print(f"💥 Kritična greška: {e}")
