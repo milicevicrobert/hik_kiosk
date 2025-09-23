@@ -1,6 +1,5 @@
 from nicegui import ui
 import sqlite3
-import pandas as pd
 import time
 from datetime import datetime, timedelta
 from nice_config import DB_PATH, SOUND_FILE
@@ -32,7 +31,7 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
-def set_comm_flag(key: str, value: int = 1):
+def set_comm_flag(key: str, value: int = 1) -> None:
     with get_connection() as conn:
         conn.execute(
             """
@@ -45,7 +44,7 @@ def set_comm_flag(key: str, value: int = 1):
         conn.commit()
 
 
-def set_kiosk_heartbeat():
+def set_kiosk_heartbeat() -> None:
     set_comm_flag("kiosk_heartbeat", int(time.time()))
 
 
@@ -71,25 +70,26 @@ def create_alarm_from_zone(zone_row: dict) -> None:
         conn.commit()
 
 
-def get_aktivni_alarms() -> pd.DataFrame:
+def get_aktivni_alarmi() -> list[sqlite3.Row]:
     """Vrati sve aktivne alarme iz tablice alarms u bazi podataka."""
     with get_connection() as conn:
-        return pd.read_sql_query(
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute(
             """
             SELECT id, zone_id, zone_name, vrijeme, korisnik, soba
             FROM alarms
             WHERE potvrda = 0
             ORDER BY vrijeme DESC
-            """,
-            conn,
+            """
         )
-
+        return cur.fetchall()
 
 def validan_pin(pin: str, duljina: int = 4) -> bool:
     return pin.isdigit() and len(pin) == duljina
 
 
-def validiraj_osoblje(pin: str):
+def validiraj_osoblje(pin: str) -> tuple[int, str] | None:
     with get_connection() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -102,7 +102,7 @@ def validiraj_osoblje(pin: str):
         return cur.fetchone()
 
 
-def potvrdi_alarm(alarm_id: int, osoblje_ime: str):
+def potvrdi_alarm(alarm_id: int, osoblje_ime: str) -> None:
     with get_connection() as conn:
         conn.execute(
             """
@@ -117,7 +117,7 @@ def potvrdi_alarm(alarm_id: int, osoblje_ime: str):
         conn.commit()
 
 
-def reset_zone_alarm(zone_id: int):
+def reset_zone_alarm(zone_id: int) -> None:
     with get_connection() as conn:
         conn.execute(
             """
@@ -131,7 +131,7 @@ def reset_zone_alarm(zone_id: int):
         conn.commit()
 
 
-def set_zone_cooldown(zone_id: int, seconds: int = COOLDOWN_SECONDS):
+def set_zone_cooldown(zone_id: int, seconds: int = COOLDOWN_SECONDS) -> None:
     with get_connection() as conn:
         conn.execute(
             "UPDATE zone SET cooldown_until_epoch = ? WHERE id = ?",
@@ -161,62 +161,62 @@ def get_zadnji_potvrdjeni_alarm_korisnika(korisnik: str) -> dict | None:
         return None
 
 
-def check_and_create_alarms():
+def check_and_create_alarms()-> None:
     """Za svaku zonu u alarmu, ako nema aktivnog alarma i nije u cooldownu – kreiraj novi alarm."""
     now_epoch = int(time.time())
     with get_connection() as conn:
-        # dohvatimo sve zone koje su u alarm_status = 1 iz zone tablice u dataframe zones_df
-        # i sve aktivne alarme iz alarms tablice u dataframe aktivni_df
-        zones_df = pd.read_sql_query(
-            """
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        # sve zone
+        cur.execute("""
             SELECT id, naziv, alarm_status, korisnik_id, last_alarm_time,
                    COALESCE(cooldown_until_epoch, 0) AS cooldown_until_epoch
             FROM zone
-            """,
-            conn,
-        )
-        aktivni_df = pd.read_sql_query(
-            "SELECT zone_id FROM alarms WHERE potvrda = 0",
-            conn,
-        )
-    # aktivni_zone_ids:set zone_id:int koje su u aktivni_df:dataframe
-    aktivni_zone_ids = (
-        set(aktivni_df["zone_id"].tolist()) if not aktivni_df.empty else set()
-    )
+        """)
+        zones = cur.fetchall()
 
-    # za svaku zonu u zones_df:dataframe
-    for _, row in zones_df.iterrows():
-        last_alarm_time_epoch = _to_epoch(row.get("last_alarm_time"))
-        cooldown_epoch = int(row.get("cooldown_until_epoch") or 0)
-        alarm_status = int(row.get("alarm_status") or 0)
+        # aktivni alarmi
+        cur.execute("SELECT zone_id FROM alarms WHERE potvrda = 0")
+        aktivni = cur.fetchall()
+
+    # set zone_id iz aktivnih alarma
+    aktivni_zone_ids = {row["zone_id"] for row in aktivni} if aktivni else set()
+
+    # obrada svake zone
+    for row in zones:
+        last_alarm_time_epoch = _to_epoch(row["last_alarm_time"])
+        cooldown_epoch = int(row["cooldown_until_epoch"] or 0)
+        alarm_status = int(row["alarm_status"] or 0)
+
         if alarm_status != 1:
             continue  # zona nije u alarm_status = 1
         if row["id"] in aktivni_zone_ids:
-            continue  # već postoji aktivni alarm za tu zonu
+            continue  # već postoji aktivni alarm
         if cooldown_epoch > now_epoch:
-            continue  # još traje cooldown nakon potvrde
+            continue  # još traje cooldown
         if last_alarm_time_epoch <= cooldown_epoch:
-            continue  # zadnji stisnuti alarm je za vrijeme zadnjeg cooldowna
+            continue  # zadnji alarm je unutar cooldowna
 
-        # pokušaj dohvatiti korisnika/sobu prema korisnik_id
+        # dohvat korisnika/sobe
         korisnik = None
         soba = None
-        kid = row.get("korisnik_id")
-        if pd.notna(kid):
+        kid = row["korisnik_id"]
+        if kid is not None:
             try:
                 kid_int = int(kid)
                 with get_connection() as conn:
-                    kdf = pd.read_sql_query(
-                        "SELECT ime, soba FROM korisnici WHERE id = ?",
-                        conn,
-                        params=(kid_int,),
-                    )
-                if not kdf.empty:
-                    korisnik = kdf.iloc[0]["ime"]
-                    soba = kdf.iloc[0]["soba"]
+                    conn.row_factory = sqlite3.Row
+                    cur = conn.cursor()
+                    cur.execute("SELECT ime, soba FROM korisnici WHERE id = ?", (kid_int,))
+                    krow = cur.fetchone()
+                if krow:
+                    korisnik = krow["ime"]
+                    soba = krow["soba"]
             except Exception:
                 pass
 
+        # kreiraj alarm
         create_alarm_from_zone(
             {
                 "id": row["id"],
@@ -226,11 +226,9 @@ def check_and_create_alarms():
             }
         )
 
-
 # ------------------ AUDIO KONTROLA ------------------
 
-
-def control_sound(action: str, sound_enabled: bool | None = None):
+def control_sound(action: str, sound_enabled: bool | None = None) -> bool | None:
     if action == "play" and sound_enabled:
         ui.run_javascript(
             """
@@ -281,7 +279,7 @@ def control_sound(action: str, sound_enabled: bool | None = None):
 # ------------------ UI ELEMENT: PRIKAZ ALARMA ------------------
 
 
-def prikazi_alarm(row: dict, container, update_callback):
+def prikazi_alarm(row: dict, container, update_callback)-> None:
     alarm_id = row["id"]
     zone_id = row["zone_id"]
     zone_name = row["zone_name"]
@@ -426,8 +424,9 @@ def main_page():
         set_kiosk_heartbeat()
         check_and_create_alarms()
 
-        df = get_aktivni_alarms()
-        current_ids = set(df["id"].tolist()) if not df.empty else set()
+        rows = get_aktivni_alarmi()
+
+        current_ids = {row["id"] for row in rows} if rows else set()
 
         if not current_ids:
             if last_alarm_ids != current_ids:
@@ -439,7 +438,7 @@ def main_page():
         novi_alarm = not current_ids.issubset(last_alarm_ids)
         if current_ids != last_alarm_ids:
             container.clear()
-            for _, row in df.iterrows():
+            for row in rows:
                 prikazi_alarm(row, container, tick)
             last_alarm_ids = current_ids
 
