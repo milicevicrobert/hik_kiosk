@@ -336,15 +336,8 @@ def prikazi_alarm(row: dict, container, update_callback) -> None:
 
                     potvrdi_alarm(alarm_id, osoblje[1])
                     reset_zone_alarm(zone_id)
+                    set_comm_flag("resetAlarm", 1)
                     set_zone_cooldown(zone_id, COOLDOWN_SECONDS)
-
-                    # Resetiraj centralu tek kad NEMA više aktivnih alarma
-                    with get_connection() as conn:
-                        cur = conn.cursor()
-                        cur.execute("SELECT COUNT(*) FROM alarms WHERE potvrda = 0")
-                        active_count = cur.fetchone()[0]
-                    if int(active_count) == 0:
-                        set_comm_flag("resetAlarm", 1)
 
                     ui.notify(f"✔️ Alarm potvrđen od: {osoblje[1]}", type="positive")
                     if update_callback:
