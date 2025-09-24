@@ -192,7 +192,15 @@ def check_and_create_alarms() -> None:
         alarm_status = int(row["alarm_status"] or 0)
 
         if alarm_status != 1:
-            continue  # zona nije u alarm_status = 1
+            continue  # zona nije u alarm_status =         
+        
+        # --- NOVO: zona je u alarmu, ali nema aktivnog reda u alarms i još traje cooldown
+        # to znači da se eventualno "novo" stiskanje neće moći evidentirati -> tražimo reset centrale
+        if (row["id"] not in aktivni_zone_ids) and (cooldown_epoch > now_epoch):  # ⬅️ NOVO
+            set_comm_flag("resetAlarm", 1)  # scanner će odraditi reset i vratiti flag na 0  ⬅️ NOVO
+            # nema kreiranja alarma dok je cooldown aktivan
+            continue  # ⬅️ NOVO1
+
         if row["id"] in aktivni_zone_ids:
             continue  # već postoji aktivni alarm
         if cooldown_epoch > now_epoch:
