@@ -5,8 +5,8 @@ from datetime import datetime, timedelta
 from nice_config import DB_PATH, SOUND_FILE
 
 # ------------------ KONFIG ------------------
-REFRESH_INTERVAL = 2  # s: koliko često kiosk "ticka"
-COOLDOWN_SECONDS = 120  # s: koliko nakon potvrde NE kreiramo novi alarm za istu zonu
+REFRESH_INTERVAL = 10  # s: koliko često kiosk "ticka"
+COOLDOWN_SECONDS = 240  # s: koliko nakon potvrde NE kreiramo novi alarm za istu zonu
 TIME_FMT = "%Y-%m-%d %H:%M:%S"
 
 
