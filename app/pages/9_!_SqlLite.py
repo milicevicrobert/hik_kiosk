@@ -45,6 +45,7 @@ REQUIRED_TABLES = {
         "last_updated",
         "last_alarm_time",
         "cooldown_until_epoch",
+        "cooldown_until",
     },
     "alarms": {
         "id",
@@ -80,6 +81,7 @@ TYPE_MAP = {
     "key": "TEXT",
     "value": "INTEGER DEFAULT 0",
     "cooldown_until_epoch": "INTEGER DEFAULT 0",
+    "cooldown_until": "TEXT DEFAULT NULL",
 }
 
 
@@ -133,7 +135,7 @@ INDEX_DEFS = [
     (
         "ix_zone_cooldown",
         "zone",
-        "CREATE INDEX IF NOT EXISTS ix_zone_cooldown ON zone(cooldown_until_epoch)",
+        "CREATE INDEX IF NOT EXISTS ix_zone_cooldown ON zone(cooldown_until)",
     ),
     (
         "ix_zone_korisnik_id",
@@ -400,7 +402,7 @@ with tab1:
     else:
         with connect() as conn:
             df_status = inspect_schema(conn)
-        st.dataframe(df_status, use_container_width=True, hide_index=True)
+        st.dataframe(df_status, width='stretch', hide_index=True)
 
         # Vizualna oznaka nedostajućih kolona po tablici
         for _, row in df_status.iterrows():
@@ -440,7 +442,7 @@ with tab1:
     st.markdown("### ⚙️ Akcije")
     if st.button(
         "🔄 Inicijaliziraj / popravi (tablice, kolone, indeksi) — i prikaži log",
-        use_container_width=True,
+        width='stretch',
     ):
         logs = []
         # Kreiraj datoteku ako nedostaje
@@ -487,7 +489,7 @@ with tab1:
         st.success("✅ Inicijalizacija / popravak dovršen. Detaljni log ispod.")
         st.code("\n".join(logs))
 
-    if st.button("💾 Napravi backup i prikaži putanju", use_container_width=True):
+    if st.button("💾 Napravi backup i prikaži putanju", width='stretch'):
         if not os.path.exists(DB_PATH):
             st.error("Baza ne postoji — nema što backupirati.")
         else:
@@ -531,10 +533,10 @@ with tab2:
                                 "Prikaži sve zapise", value=len(df) <= 100
                             )
                         if show_all or len(df) <= 100:
-                            st.dataframe(df, use_container_width=True, height=420)
+                            st.dataframe(df, width='stretch', height=420)
                         else:
                             st.dataframe(
-                                df.head(100), use_container_width=True, height=420
+                                df.head(100), width='stretch', height=420
                             )
                             st.info(
                                 f"Prikazano prvih 100 od {len(df)} zapisa. Označi 'Prikaži sve zapise' za sve."
@@ -546,7 +548,7 @@ with tab2:
                             data=csv,
                             file_name=f"{selected}.csv",
                             mime="text/csv",
-                            use_container_width=True,
+                            width='stretch',
                         )
 
 # ---------- TAB 3: Analitika & Optimizacija ----------
@@ -565,13 +567,13 @@ with tab3:
                 df_sizes = pd.DataFrame(rows)
                 c1, c2 = st.columns([2, 1])
                 with c1:
-                    st.dataframe(df_sizes, use_container_width=True, hide_index=True)
+                    st.dataframe(df_sizes, width='stretch', hide_index=True)
                 with c2:
                     if not df_sizes.empty and df_sizes["Broj zapisa"].sum() > 0:
                         st.bar_chart(df_sizes.set_index("Tablica")["Broj zapisa"])
 
         st.markdown("#### 🧹 VACUUM + ANALYZE (s izvještajem)")
-        if st.button("Pokreni i prikaži uštedu", use_container_width=True):
+        if st.button("Pokreni i prikaži uštedu", width='stretch'):
             before_kb, after_kb = vacuum_analyze()
             delta = before_kb - after_kb
             if delta >= 0:

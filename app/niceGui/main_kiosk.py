@@ -1,4 +1,4 @@
-from nicegui import ui
+from nicegui import ui, Client
 import sqlite3
 import time
 from datetime import datetime, timedelta
@@ -132,10 +132,12 @@ def reset_zone_alarm(zone_id: int) -> None:
 
 
 def set_zone_cooldown(zone_id: int, seconds: int = COOLDOWN_SECONDS) -> None:
+    expire_time = datetime.now() + timedelta(seconds=seconds)
+    expire_str = expire_time.strftime(TIME_FMT)  # npr. "2025-09-24 15:42:00"
     with get_connection() as conn:
         conn.execute(
-            "UPDATE zone SET cooldown_until_epoch = ? WHERE id = ?",
-            (int(time.time()) + seconds, zone_id),
+            "UPDATE zone SET cooldown_until = ? WHERE id = ?",
+            (expire_str, zone_id),
         )
         conn.commit()
 
@@ -171,7 +173,7 @@ def check_and_create_alarms()-> None:
         # sve zone
         cur.execute("""
             SELECT id, naziv, alarm_status, korisnik_id, last_alarm_time,
-                   COALESCE(cooldown_until_epoch, 0) AS cooldown_until_epoch
+                COALESCE(cooldown_until, '') AS cooldown_until
             FROM zone
         """)
         zones = cur.fetchall()
@@ -186,17 +188,17 @@ def check_and_create_alarms()-> None:
     # obrada svake zone
     for row in zones:
         last_alarm_time_epoch = _to_epoch(row["last_alarm_time"])
-        cooldown_epoch = int(row["cooldown_until_epoch"] or 0)
+        cooldown_epoch = _to_epoch(row["cooldown_until"])  # TEXT -> epoch
         alarm_status = int(row["alarm_status"] or 0)
 
         if alarm_status != 1:
-            continue  # zona nije u alarm_status = 1
+            continue
         if row["id"] in aktivni_zone_ids:
-            continue  # već postoji aktivni alarm
+            continue
         if cooldown_epoch > now_epoch:
-            continue  # još traje cooldown
+            continue
         if last_alarm_time_epoch <= cooldown_epoch:
-            continue  # zadnji alarm je unutar cooldowna
+            continue
 
         # dohvat korisnika/sobe
         korisnik = None
@@ -385,7 +387,7 @@ def main_page():
             time_lbl.text = f"{now.strftime('%d.%m.%Y')} 🕒 {now.strftime('%H:%M')}"
 
         _upd_time()
-        ui.timer(60, _upd_time)
+        clock_timer=ui.timer(60, _upd_time)
 
         ui.label("🔔 AKTIVNI ALARMI - DOM BUZIN").classes(
             "bg-gray-800 rounded-lg px-3 py-1"
@@ -421,6 +423,14 @@ def main_page():
     def tick():
         nonlocal last_alarm_ids, sound_enabled
 
+        # 1) ako je klijent otišao, ne radi ništa
+        try:
+            c = ui.get_client()
+            if c.id not in Client.instances:
+                return
+        except Exception:
+            return
+
         set_kiosk_heartbeat()
         check_and_create_alarms()
 
@@ -445,8 +455,23 @@ def main_page():
         if novi_alarm:
             sound_enabled = control_sound("auto_play", sound_enabled)
 
-    ui.timer(REFRESH_INTERVAL, tick)
+    main_timer=ui.timer(REFRESH_INTERVAL, tick)
     tick()
+
+    
+    def _on_disconnect():
+        try:
+            main_timer.active = False
+        except Exception:
+            pass
+        try:
+            clock_timer.active = False
+        except Exception:
+            pass
+
+    ui.on_disconnect(_on_disconnect)
+
+
 
 
 # ------------------ MOBILE CSS FIXES ------------------
