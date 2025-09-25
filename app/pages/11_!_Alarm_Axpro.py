@@ -9,7 +9,6 @@ from module.axpro_auth import (
     clear_axpro_alarms,
 )
 
-
 st.set_page_config(page_title="📈 Alarm Axpro", page_icon="📈", layout="wide")
 
 # ------------------ POMOĆNE ------------------
@@ -28,7 +27,7 @@ def get_axpro_data():
         return None
     zone_list = [z["Zone"] for z in zones.get("ZoneList", [])]
     df = pd.DataFrame(zone_list)
-    df = df[df["AlarmStatus"] == 1]  # Filtrirajaj samo aktivne alarme
+    df = df[df["alarm"] == 1]  # Filtrirajaj samo aktivne alarme
     return df
 
 

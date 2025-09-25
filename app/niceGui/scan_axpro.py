@@ -27,7 +27,8 @@ REFRESH_INTERVAL = 10  # sekundi između osvježavanja aktivnih alarma
 
 
 def poll_zones_df(cookie) -> pd.DataFrame:
-    """Vrati DataFrame zona s poljima id, name, alarm (bool)."""
+    """Vrati DataFrame zona s poljima: id(int), name(txt), alarm (bool).\n
+    Vrati samo zone koje su u alarm stanju "alarm" = 1. Ako nema, vrati prazan DF."""
     data = get_zone_status(cookie)
     zone_list = [z["Zone"] for z in data.get("ZoneList", [])]
     df = pd.DataFrame(zone_list, columns=["id", "name", "alarm"])
@@ -42,9 +43,7 @@ def sync_active_and_reset() -> int:
     except Exception as e:
         print(f"Greška pri prijavi na Axpro centralu: {e}")
         return 0
-    if not cookie:
-        print("Neuspješna prijava na Axpro centralu.")
-        return 0
+
     df = poll_zones_df(cookie)
     if df.empty:
         print("Nema aktivnih zona za upis.")
@@ -296,8 +295,6 @@ def main_page():
         "id=alarm-audio loop controls=false preload=auto autoplay playsinline muted"
     ).classes("hidden")
 
-    # JS helperi: prvo pokušaj preko Fully Kiosk API-ja (nema ograničenja),
-    # ako nije dostupan -> HTML5 audio s "muted autoplay -> unmute" trikom.
     # JS helperi: prvo pokušaj preko Fully Kiosk API-ja (nema ograničenja),
     # ako nije dostupan -> HTML5 audio s "muted autoplay -> unmute" trikom.
     ui.run_javascript(
