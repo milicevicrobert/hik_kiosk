@@ -48,7 +48,6 @@ def sync_active_and_reset() -> int:
 
     df = poll_zones_df(cookie)
     if df.empty:
-        print("Nema aktivnih zona za upis.")
         return 0
     now_txt = datetime.now().strftime(TIME_FMT)
     with sqlite3.connect(DB_PATH) as conn:
