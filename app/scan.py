@@ -1,11 +1,9 @@
 import os
 import sqlite3
-from nicegui import ui
 import pandas as pd
 from datetime import datetime
 import time
-from config import DB_PATH, TIME_FMT, PIN
-from axpro_auth import (
+from module.axpro_auth import (
     login_axpro,
     get_zone_status,
     clear_axpro_alarms,
@@ -13,6 +11,9 @@ from axpro_auth import (
     USERNAME,
 )
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "data", "alarmni_sustav.db")
+TIME_FMT = "%Y-%m-%d %H:%M:%S"
 
 # ------------------ AXPRO ------------------
 

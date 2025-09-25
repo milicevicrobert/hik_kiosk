@@ -6,6 +6,7 @@ DB_PATH = os.path.join(BASE_DIR, "data", "alarmni_sustav.db")
 SOUND_FILE = os.path.join(os.path.dirname(__file__), "test_alarm.mp3")
 PIN = int(4)  # broj znamenki PIN-a
 TIME_FMT = "%Y-%m-%d %H:%M:%S"
+
 REQUIRED_TABLES = {
     "osoblje": {"id", "ime", "sifra", "aktivna"},
     "korisnici": {"id", "ime", "soba", "zona_id"},

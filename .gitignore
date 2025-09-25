@@ -1,11 +1,9 @@
 # Development artifacts
 app/data/
-app/_deprecated/
 app/__pycache__/
-app/axpro/__pycache__/
-app/niceGui/__pycache__/
+app/module/__pycache__/
 app/static/__pycache__/
-app/templates/__pycache__/  
+  
 
 # Python artifacts
 *.pyc

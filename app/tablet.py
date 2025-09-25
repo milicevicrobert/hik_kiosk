@@ -1,77 +1,19 @@
 import os
 import sqlite3
 from nicegui import ui
-import pandas as pd
 from datetime import datetime
-import time
-from module.config import DB_PATH, TIME_FMT, PIN
-from module.axpro_auth import (
-    login_axpro,
-    get_zone_status,
-    clear_axpro_alarms,
-    HOST,
-    USERNAME,
-)
+
 
 # ------------------ CONFIG ------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "data", "alarmni_sustav.db")
+SOUND_FILE = os.path.join(BASE_DIR, "static", "test_alarm.mp3")
 
-SOUND_FILE = os.path.join(
-    os.path.dirname(__file__), "test_alarm.mp3"
-)  # putanja do audio fajla za alarm
-
-
-# ------------------ AXPRO ------------------
-
-SLEEP_TIME_AFTER_RESET = 5  # sekundi nakon reseta centrale
-REFRESH_INTERVAL = 10  # sekundi između osvježavanja aktivnih alarma
+PIN = int(4)  # broj znamenki PIN-a
+TIME_FMT = "%Y-%m-%d %H:%M:%S"
+REFRESH_INTERVAL = 5  # sekunde između osvježavanja liste aktivnih alarma
 
 
-def poll_zones_df(cookie) -> pd.DataFrame:
-    """Vrati DataFrame zona s poljima id, name, alarm (bool)."""
-    data = get_zone_status(cookie)
-    zone_list = [z["Zone"] for z in data.get("ZoneList", [])]
-    df = pd.DataFrame(zone_list, columns=["id", "name", "alarm"])
-    df["alarm"] = df["alarm"].apply(lambda x: int(x) == 1 if x is not None else False)
-    return df[df["alarm"]].reset_index(drop=True)
-
-
-def sync_active_and_reset() -> int:
-    """Upiše aktivne zone u tablicu zone i resetira centralu. Vraća broj upisanih."""
-    try:
-        cookie = login_axpro(HOST, USERNAME)
-    except Exception as e:
-        print(f"Greška pri prijavi na Axpro centralu: {e}")
-        return 0
-    if not cookie:
-        print("Neuspješna prijava na Axpro centralu.")
-        return 0
-    df = poll_zones_df(cookie)
-    if df.empty:
-        print("Nema aktivnih zona za upis.")
-        return 0
-    now_txt = datetime.now().strftime(TIME_FMT)
-    with sqlite3.connect(DB_PATH) as conn:
-        cur = conn.cursor()
-
-        # upsert naziva vidi ali je potrebno
-        cur.executemany(
-            "INSERT INTO zone (id, naziv) VALUES (?, ?) "
-            "ON CONFLICT(id) DO UPDATE SET naziv=excluded.naziv",
-            list(df[["id", "name"]].itertuples(index=False, name=None)),
-        )
-
-        # postavi aktivno stanje i vremena
-        cur.executemany(
-            "UPDATE zone SET alarm_status=1, last_alarm_time=? WHERE id=?",
-            [(now_txt, int(zid)) for zid in df["id"].tolist()],
-        )
-        conn.commit()
-
-    # resetiraj centralu nakon upisa
-    clear_axpro_alarms(cookie)
-    # pričekaj da se centrala resetira 5 secundi
-    time.sleep(SLEEP_TIME_AFTER_RESET)
-    return len(df)
 
 
 # ------------------ BAZA ------------------
@@ -90,6 +32,7 @@ def validiraj_osoblje(pin: str) -> tuple[int, str] | None:
 
 
 def potvrdi_alarm(alarm_id: int, osoblje_ime: str) -> None:
+    """Stavi db.alarms.potvrda=1 za zadani alarm_id i zabilježi osoblje_ime i vrijemePotvrde."""
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             """
@@ -102,6 +45,7 @@ def potvrdi_alarm(alarm_id: int, osoblje_ime: str) -> None:
 
 
 def reset_zone_alarm(zone_id: int) -> None:
+    """Postavi db.zone.alarm_status=0 i last_updated=now() za zadani zone_id."""
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             """
@@ -116,6 +60,7 @@ def reset_zone_alarm(zone_id: int) -> None:
 
 
 def get_zadnji_potvrdjeni_alarm_korisnika(korisnik: str) -> dict | None:
+    """Vrati zadnji potvrđeni alarm za danog korisnika ili None ako nema."""
     if not korisnik:
         return None
     with sqlite3.connect(DB_PATH) as conn:
@@ -136,6 +81,7 @@ def get_zadnji_potvrdjeni_alarm_korisnika(korisnik: str) -> dict | None:
 
 
 def get_aktivni_alarmi() -> list[dict]:
+    """Upiši ud db.alarms sve aktivne (potvrda=0) i vrati ih kao listu dict-ova."""
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
@@ -150,52 +96,53 @@ def get_aktivni_alarmi() -> list[dict]:
 
 
 def check_and_create_alarm_df(DB_PATH: str) -> None:
+    """Provjeri i kreiraj tablicu db.alarms ako ne postoji.
+    Također kreira index na zone_id za brže pretrage."""
     now_txt = datetime.now().strftime(TIME_FMT)
     with sqlite3.connect(DB_PATH) as conn:
-        # 1) Učitaj potrebne tablice u DF-ove
-        df_zone = pd.read_sql_query(
-            """
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        # 1) Učitaj sve zone + korisnika
+        cur.execute("""
             SELECT z.id, z.naziv, z.korisnik_id, z.alarm_status,
                    k.ime AS korisnik, k.soba
             FROM zone z
             LEFT JOIN korisnici k ON k.id = z.korisnik_id
-        """,
-            conn,
-        )
-        df_aktivni = pd.read_sql_query(
-            "SELECT DISTINCT zone_id FROM alarms WHERE potvrda=0", conn
-        )
-        # 2) Filtriraj: samo zone u alarmu bez već aktivnog alarma
-        df = df_zone[df_zone["alarm_status"] == 1].copy()
-        if not df_aktivni.empty:
-            df = df.merge(df_aktivni, how="left", left_on="id", right_on="zone_id")
-            df = df[df["zone_id"].isna()]  # anti-join
-            df = df.drop(columns=["zone_id"])
-        if df.empty:
+        """)
+        zone_rows = cur.fetchall()
+
+        # 2) Učitaj već aktivne alarme (nepotvrđene)
+        cur.execute("SELECT DISTINCT zone_id FROM alarms WHERE potvrda=0")
+        aktivni_ids = {row["zone_id"] for row in cur.fetchall()}
+
+        # 3) Filtriraj: zone koje su u alarmu, ali nemaju aktivan alarm
+        nove_zone = [
+            r for r in zone_rows
+            if r["alarm_status"] == 1 and r["id"] not in aktivni_ids
+        ]
+
+        if not nove_zone:
             return
-        # 3) Bulk INSERT u alarms (jedna transakcija)
+
+        # 4) Bulk INSERT u alarms
         rows = [
             (
-                int(r.id),
-                str(r.naziv),
+                int(r["id"]),
+                str(r["naziv"]),
                 now_txt,
                 0,
-                (None if pd.isna(r.korisnik) else str(r.korisnik)),
-                (None if pd.isna(r.soba) else str(r.soba)),
+                (None if r["korisnik"] is None else str(r["korisnik"])),
+                (None if r["soba"] is None else str(r["soba"])),
             )
-            for r in df[["id", "naziv", "korisnik", "soba"]].itertuples(index=False)
+            for r in nove_zone
         ]
-        cur = conn.cursor()
-        cur.executemany(
-            """
+        cur.executemany("""
             INSERT OR IGNORE INTO alarms
                 (zone_id, zone_name, vrijeme, potvrda, korisnik, soba)
             VALUES (?, ?, ?, ?, ?, ?)
-        """,
-            rows,
-        )
+        """, rows)
         conn.commit()
-
 
 # ------------------ AUDIO KONTROLA ------------------
 
@@ -237,12 +184,13 @@ def prikazi_alarm(row: dict, container, update_callback) -> None:
         ) as exp:
             with exp.add_slot("header"):
                 with ui.element("div").classes(
-                    "grid grid-cols-[2fr_2fr_2fr_3fr] sm:grid-cols-[1fr_1fr_1fr_1.5fr] w-full gap-3 px-3"
+                    "grid grid-cols-[1fr_1fr_3fr_3fr_2fr] sm:grid-cols-[1fr_1fr_1.5fr_1.5fr_1fr] w-full gap-3 px-3"
                 ):
                     ui.label(f"🕒 {t_hhmm}")
                     ui.label(f"⏱️ {proteklo}")
-                    ui.label(f"🛏️ {soba}")
+                    ui.label(f"🛏️ {soba}").classes("font-bold text-2xl")
                     ui.label(f"🧓 {korisnik}")
+                    ui.label(f"🚨 {zone_name}")
 
             zadnji = get_zadnji_potvrdjeni_alarm_korisnika(korisnik)
             with ui.row().classes("items-end justify-around w-full gap-2 sm:gap-4"):
@@ -278,8 +226,10 @@ def prikazi_alarm(row: dict, container, update_callback) -> None:
                     reset_zone_alarm(zone_id)
 
                     ui.notify(f"✔️ Alarm potvrđen od: {osoblje[1]}", type="positive")
+
                     if update_callback:
                         update_callback()
+
 
                 ui.button("POTVRDI", on_click=potvrdi_handler).props(
                     "flat unelevated"
@@ -291,43 +241,68 @@ def prikazi_alarm(row: dict, container, update_callback) -> None:
 # ------------------ MAIN PAGE ------------------
 @ui.page("/")
 def main_page():
-    # skriveni audio element koji je spreman za fallback
+    # skriveni audio element (spreman za autoplay trik)
     ui.audio(SOUND_FILE).props(
-        "id=alarm-audio loop controls=false preload=auto autoplay playsinline"
+        "id=alarm-audio loop controls=false preload=auto autoplay playsinline muted"
     ).classes("hidden")
 
-    # helper JS: probaj preko Fully Kiosk API-ja (bez geste), inače fallback na <audio>
+    # JS helperi: prvo pokušaj preko Fully Kiosk API-ja (nema ograničenja),
+    # ako nije dostupan -> HTML5 audio s "muted autoplay -> unmute" trikom.
     ui.run_javascript(
         """
+    (function () {
+
+    function playHtml5() {
+        const a = document.getElementById('alarm-audio');
+        if (!a) return false;
+
+        try {
+        a.pause();              // očisti prethodno stanje
+        a.currentTime = 0;      // od početka
+        a.muted = true;         // start u muted modu (autoplay dopušten)
+        const p = a.play();
+
+        // kad krene svirati, odmah ga odmute-aj
+        const unmute = () => { try { a.muted = false; } catch(e) {} };
+        a.addEventListener('playing', unmute, { once: true });
+        // fallback ako 'playing' ne dođe dovoljno brzo
+        setTimeout(unmute, 80);
+
+        if (p && typeof p.catch === 'function') p.catch(()=>{});
+        return true;
+        } catch (e) {
+        return false;
+        }
+    }
+
     window.__playAlarmNow = () => {
-    const a = document.getElementById('alarm-audio');
-    const src = a ? (a.currentSrc || a.src) : null;
+        const a = document.getElementById('alarm-audio');
+        const src = a ? (a.currentSrc || a.src) : null;
 
-    // 1) Pokušaj preko Fully Kiosk Browsera (radi bez korisničke geste)
-    if (typeof fully !== 'undefined' && fully.playSound && src) {
+        // 1) Fully Kiosk Browser (svira bez ikakvog gesta)
+        if (typeof fully !== 'undefined' && fully.playSound && src) {
         try { fully.playSound(src); return true; } catch (e) {}
-    }
+        }
 
-    // 2) Fallback: pokušaj standardni HTML5 audio (može biti blokiran u klasičnom browseru)
-    if (a) {
-        try { a.currentTime = 0; a.muted = false; a.play().catch(()=>{}); return true; } catch (e) {}
-    }
-    return false;
+        // 2) HTML5 fallback s muted->unmute
+        return playHtml5();
     };
 
     window.__stopAlarmNow = () => {
-    // Zaustavi zvuk preko Fully ako je moguće
-    if (typeof fully !== 'undefined' && fully.stopSound) {
+        if (typeof fully !== 'undefined' && fully.stopSound) {
         try { fully.stopSound(); } catch (e) {}
-    }
-    const a = document.getElementById('alarm-audio');
-    if (a && !a.paused) { try { a.pause(); } catch (e) {} }
+        }
+        const a = document.getElementById('alarm-audio');
+        if (a) { try { a.pause(); } catch(e) {} }
     };
+
+    })();
     """
     )
 
     last_alarm_ids: set[int] = set()
-    sound_enabled = True
+    sound_paused_by_user = False  # Dodaj varijablu za praćenje pauze
+    sound_playing = False
 
     # --- Siguran UI update: ignorira race nakon gašenja taba/klijenta
     def safe_ui(fn, *args, **kwargs):
@@ -358,28 +333,30 @@ def main_page():
         ui.label("🔔 AKTIVNI ALARMI - DOM BUZIN").classes(
             "bg-gray-800 rounded-lg px-3 py-1"
         )
+        def pause_sound():
+            nonlocal sound_playing, sound_paused_by_user
+            control_sound("pause")
+            sound_playing = False
+            sound_paused_by_user = True
+            ui.notify("🔇 Zvuk pauziran", type="info")
 
-        def _toggle_sound():
-            nonlocal sound_enabled
-            sound_enabled = control_sound("toggle", sound_enabled)
-
-        ui.button(icon="volume_off", on_click=_toggle_sound).props(
+        ui.button(icon="volume_off", on_click=pause_sound).props(
             "flat unelevated"
         ).classes("bg-gray-800 rounded-lg text-white hover:bg-gray-700")
 
     container = ui.column().classes("w-full")
-
+      
     def render_empty():
         safe_ui(container.clear)
         with container:
             with ui.card().classes(
-                "w-full h-screen flex items-center justify-center bg-black"
+                "flex items-center justify-center w-full mx-auto bg-black"
             ):
-                ui.label(
+                    ui.label(
                     "⚠️ PAŽNJA!\n\n"
                     "Ovaj uređaj je dio sustava za nadzor korisnika.\n"
-                    "Namijenjen je isključivo ovlaštenom osoblju doma.\n\n"
-                    "📵 Molimo korisnike, posjetitelje i treće osobe: ne dirajte tablet.\n\n"
+                    "Namijenjen je isključivo ovlaštenom osoblju doma.\n"
+                    "📵 Molimo korisnike, posjetitelje i treće osobe da ne diraju tablet.\n"
                     "Bilo kakva neovlaštena uporaba može uzrokovati prekid rada sustava.\n\n"
                     "Hvala na razumijevanju.\nVaš Dom"
                 ).classes(
@@ -387,41 +364,52 @@ def main_page():
                 )
 
     def tick():
-        nonlocal last_alarm_ids, sound_enabled
-        # 1) Sinkroniziraj aktivne zone i resetiraj centralu
+        nonlocal last_alarm_ids, sound_playing,sound_paused_by_user
+
         try:
-            # upisano = sync_active_and_reset()
-            upisano = 0
+            check_and_create_alarm_df(DB_PATH)
+            rows = get_aktivni_alarmi()
         except Exception as e:
-            print(f"Greška pri sinkronizaciji s centralom: {e}")
-            upisano = 0
-        if upisano:
-            print(f"Upisano {upisano} novih aktivnih zona u bazu.")
-        # 2) Provjeri i kreiraj nove zapise u alarms
-        check_and_create_alarm_df(DB_PATH)
-        # 3) Učitaj aktivne alarme i prikaži ih
-
-        rows = get_aktivni_alarmi() or []
-        current_ids = {r["id"] for r in rows}
-
-        if not current_ids:
-            if last_alarm_ids != current_ids:
+            safe_ui(lambda: ui.notify(f"Greška pri dohvaćanju alarma: {e}", type="warning"))
+            if sound_playing:
                 control_sound("pause")
-                render_empty()
-            last_alarm_ids = current_ids
+                sound_playing = False
             return
 
+        # ako nema aktivnih alarma
+        if not rows:
+            safe_ui(container.clear)
+            render_empty()
+            if sound_playing:
+                control_sound("pause")
+                sound_playing = False
+            last_alarm_ids = set()
+            sound_paused_by_user = False  # resetiraj kad nema alarma
+            return
+
+        # ima aktivnih alarma
+        current_ids =  {r["id"] for r in rows}
         if current_ids != last_alarm_ids:
             safe_ui(container.clear)
-            for row in rows:
-                prikazi_alarm(row, container, tick)
+            for r in rows:
+                prikazi_alarm(r, container, tick)
             last_alarm_ids = current_ids
+            sound_paused_by_user = False  # resetiraj pauzu kad dođe novi alarm
 
-        if sound_enabled:
-            control_sound("play")
 
-    main_timer = ui.timer(REFRESH_INTERVAL, tick)
-    tick()
+        if current_ids and not sound_paused_by_user:
+            if not sound_playing:
+                control_sound("play")
+                sound_playing = True
+        else:
+            if sound_playing:
+                control_sound("pause")
+                sound_playing = False
+
+
+    ui.timer(REFRESH_INTERVAL, tick)
+    ui.timer(1, tick, once=True)  # inicijalni tick nakon 1 sekunde
+
 
 
 # ------------------ MOBILE CSS FIXES ------------------
@@ -447,4 +435,4 @@ ui.add_head_html(
 )
 
 # ------------------ START ------------------
-ui.run(title="Alarm Kiosk", reload=False, dark=True, port=8080)
+ui.run(title="Alarm Kiosk", reload=True, dark=True, port=8080)

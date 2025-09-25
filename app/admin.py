@@ -3,7 +3,9 @@ import os
 import sqlite3
 import pandas as pd
 from datetime import datetime
-from admin_config import DB_PATH
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR,"data", "alarmni_sustav.db")
 
 # Database schema definition
 REQUIRED_TABLES = {
