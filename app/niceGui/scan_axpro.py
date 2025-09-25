@@ -415,7 +415,7 @@ def main_page():
         nonlocal last_alarm_ids, sound_enabled
         # 1) Sinkroniziraj aktivne zone i resetiraj centralu
         try:
-            # upisano = sync_active_and_reset()
+            upisano = sync_active_and_reset()
             upisano = 0
         except Exception as e:
             print(f"Greška pri sinkronizaciji s centralom: {e}")
