@@ -33,6 +33,8 @@ def poll_zones_df(cookie) -> pd.DataFrame:
     zone_list = [z["Zone"] for z in data.get("ZoneList", [])]
     df = pd.DataFrame(zone_list, columns=["id", "name", "alarm"])
     df["alarm"] = df["alarm"].apply(lambda x: int(x) == 1 if x is not None else False)
+    #test makni kasnije
+    print(df)
     return df[df["alarm"]].reset_index(drop=True)
 
 
