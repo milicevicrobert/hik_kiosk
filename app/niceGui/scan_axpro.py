@@ -38,7 +38,7 @@ def poll_zones_df(cookie) -> pd.DataFrame:
     return df[df["alarm"]].reset_index(drop=True)
 
 
-async def sync_active_and_reset() -> int:
+def sync_active_and_reset() -> int:
     """Upiše aktivne zone u tablicu zone i resetira centralu. Vraća broj upisanih."""
     try:
         cookie = login_axpro(HOST, USERNAME)
@@ -71,7 +71,8 @@ async def sync_active_and_reset() -> int:
     # resetiraj centralu nakon upisa
     clear_axpro_alarms(cookie)
     # pričekaj da se centrala resetira 5 secundi
-    await asyncio.sleep(SLEEP_TIME_AFTER_RESET)
+    
+    time.sleep(SLEEP_TIME_AFTER_RESET)
     return len(df)
 
 
@@ -280,7 +281,9 @@ def prikazi_alarm(row: dict, container, update_callback) -> None:
 
                     ui.notify(f"✔️ Alarm potvrđen od: {osoblje[1]}", type="positive")
                     if update_callback:
-                        update_callback()
+                        rez=update_callback()
+                        if asyncio.iscoroutine(rez):
+                            asyncio.create_task(rez)
 
                 ui.button("POTVRDI", on_click=potvrdi_handler).props(
                     "flat unelevated"
@@ -411,11 +414,11 @@ def main_page():
                     "text-center text-green-900 whitespace-pre-line p-4 text-xl font-bold leading-loose"
                 )
 
-    async def tick():
+    def tick():
         nonlocal last_alarm_ids, sound_enabled
         # 1) Sinkroniziraj aktivne zone i resetiraj centralu
         try:
-            upisano = await sync_active_and_reset()
+            upisano = sync_active_and_reset()
             #upisano = 0
         except Exception as e:
             print(f"Greška pri sinkronizaciji s centralom: {e}")
