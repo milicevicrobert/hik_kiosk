@@ -4,75 +4,15 @@ from nicegui import ui
 import pandas as pd
 from datetime import datetime
 import time
-import asyncio
-from module.config import DB_PATH, TIME_FMT, PIN
-from module.axpro_auth import (
-    login_axpro,
-    get_zone_status,
-    clear_axpro_alarms,
-    HOST,
-    USERNAME,
-)
+
+from config import DB_PATH, TIME_FMT, PIN
 
 # ------------------ CONFIG ------------------
 
+REFRESH_INTERVAL = 5  # sekunde između osvježavanja liste aktivnih alarma
 SOUND_FILE = os.path.join(
     os.path.dirname(__file__), "test_alarm.mp3"
 )  # putanja do audio fajla za alarm
-
-
-# ------------------ AXPRO ------------------
-
-SLEEP_TIME_AFTER_RESET = 5  # sekundi nakon reseta centrale
-REFRESH_INTERVAL = 10  # sekundi između osvježavanja aktivnih alarma
-
-
-def poll_zones_df(cookie) -> pd.DataFrame:
-    """Vrati DataFrame zona s poljima: id(int), name(txt), alarm (bool).\n
-    Vrati samo zone koje su u alarm stanju "alarm" = 1. Ako nema, vrati prazan DF."""
-    data = get_zone_status(cookie)
-    zone_list = [z["Zone"] for z in data.get("ZoneList", [])]
-    df = pd.DataFrame(zone_list, columns=["id", "name", "alarm"])
-    df["alarm"] = df["alarm"].apply(lambda x: int(x) == 1 if x is not None else False)
-    #test makni kasnije
-    return df[df["alarm"]].reset_index(drop=True)
-
-
-def sync_active_and_reset() -> int:
-    """Upiše aktivne zone u tablicu zone i resetira centralu. Vraća broj upisanih."""
-    try:
-        cookie = login_axpro(HOST, USERNAME)
-    except Exception as e:
-        print(f"Greška pri prijavi na Axpro centralu: {e}")
-        return 0
-
-    df = poll_zones_df(cookie)
-    if df.empty:
-        return 0
-    now_txt = datetime.now().strftime(TIME_FMT)
-    with sqlite3.connect(DB_PATH) as conn:
-        cur = conn.cursor()
-
-        # upsert naziva vidi ali je potrebno
-        cur.executemany(
-            "INSERT INTO zone (id, naziv) VALUES (?, ?) "
-            "ON CONFLICT(id) DO UPDATE SET naziv=excluded.naziv",
-            list(df[["id", "name"]].itertuples(index=False, name=None)),
-        )
-
-        # postavi aktivno stanje i vremena
-        cur.executemany(
-            "UPDATE zone SET alarm_status=1, last_alarm_time=? WHERE id=?",
-            [(now_txt, int(zid)) for zid in df["id"].tolist()],
-        )
-        conn.commit()
-
-    # resetiraj centralu nakon upisa
-    clear_axpro_alarms(cookie)
-    # pričekaj da se centrala resetira 5 secundi
-    
-    time.sleep(SLEEP_TIME_AFTER_RESET)
-    return len(df)
 
 
 # ------------------ BAZA ------------------
@@ -279,10 +219,10 @@ def prikazi_alarm(row: dict, container, update_callback) -> None:
                     reset_zone_alarm(zone_id)
 
                     ui.notify(f"✔️ Alarm potvrđen od: {osoblje[1]}", type="positive")
+
                     if update_callback:
-                        rez=update_callback()
-                        if asyncio.iscoroutine(rez):
-                            asyncio.create_task(rez)
+                        update_callback()
+
 
                 ui.button("POTVRDI", on_click=potvrdi_handler).props(
                     "flat unelevated"
@@ -415,15 +355,7 @@ def main_page():
 
     def tick():
         nonlocal last_alarm_ids, sound_enabled
-        # 1) Sinkroniziraj aktivne zone i resetiraj centralu
-        try:
-            upisano = sync_active_and_reset()
-            #upisano = 0
-        except Exception as e:
-            print(f"Greška pri sinkronizaciji s centralom: {e}")
-            upisano = 0
-        if upisano:
-            print(f"Upisano {upisano} novih aktivnih zona u bazu.")
+
         # 2) Provjeri i kreiraj nove zapise u alarms
         check_and_create_alarm_df(DB_PATH)
         # 3) Učitaj aktivne alarme i prikaži ih
