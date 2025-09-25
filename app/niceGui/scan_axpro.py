@@ -4,6 +4,7 @@ from nicegui import ui
 import pandas as pd
 from datetime import datetime
 import time
+import asyncio
 from module.config import DB_PATH, TIME_FMT, PIN
 from module.axpro_auth import (
     login_axpro,
@@ -37,7 +38,7 @@ def poll_zones_df(cookie) -> pd.DataFrame:
     return df[df["alarm"]].reset_index(drop=True)
 
 
-def sync_active_and_reset() -> int:
+async def sync_active_and_reset() -> int:
     """Upiše aktivne zone u tablicu zone i resetira centralu. Vraća broj upisanih."""
     try:
         cookie = login_axpro(HOST, USERNAME)
@@ -70,7 +71,7 @@ def sync_active_and_reset() -> int:
     # resetiraj centralu nakon upisa
     clear_axpro_alarms(cookie)
     # pričekaj da se centrala resetira 5 secundi
-    time.sleep(SLEEP_TIME_AFTER_RESET)
+    await asyncio.sleep(SLEEP_TIME_AFTER_RESET)
     return len(df)
 
 
@@ -410,12 +411,12 @@ def main_page():
                     "text-center text-green-900 whitespace-pre-line p-4 text-xl font-bold leading-loose"
                 )
 
-    def tick():
+    async def tick():
         nonlocal last_alarm_ids, sound_enabled
         # 1) Sinkroniziraj aktivne zone i resetiraj centralu
         try:
-            upisano = sync_active_and_reset()
-            upisano = 0
+            upisano = await sync_active_and_reset()
+            #upisano = 0
         except Exception as e:
             print(f"Greška pri sinkronizaciji s centralom: {e}")
             upisano = 0
@@ -445,7 +446,7 @@ def main_page():
             control_sound("play")
 
     main_timer = ui.timer(REFRESH_INTERVAL, tick)
-    tick()
+    tick(1,tick,once=True)  # inicijalni tick odgođen za 1 secundu
 
 
 # ------------------ MOBILE CSS FIXES ------------------
