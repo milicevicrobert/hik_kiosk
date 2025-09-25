@@ -30,20 +30,15 @@ def poll_zones_df(cookie) -> pd.DataFrame:
     #test makni kasnije
     return df[df["alarm"]].reset_index(drop=True)
 
-def sync_active_and_reset() -> int:
+def sync_active_and_reset(cookie) -> int:
     """Upiše aktivne zone u tablicu db.zone i resetira centralu. Vraća broj upisanih u db.zone."""
-    try:
-        cookie = login_axpro(HOST, USERNAME)
-    except Exception as e:
-        print(f"Greška pri prijavi na Axpro centralu: {e}")
-        return 0
     df = poll_zones_df(cookie)
     if df.empty:
         return 0
+
     now_txt = datetime.now().strftime(TIME_FMT)
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
-
         # upsert naziva vidi ali je potrebno
         cur.executemany(
             "INSERT INTO zone (id, naziv) VALUES (?, ?) "
