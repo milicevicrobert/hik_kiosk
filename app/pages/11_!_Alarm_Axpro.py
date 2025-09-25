@@ -30,7 +30,6 @@ def get_axpro_data():
     df = df[df["alarm"] == 1]  # Filtrirajaj samo aktivne alarme
     return df
 
-
 # ------------------ UČITAVANJE PODATAKA ------------------
 with sqlite3.connect(DB_PATH) as conn:
 
