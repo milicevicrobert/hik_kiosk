@@ -445,8 +445,8 @@ def main_page():
         if sound_enabled:
             control_sound("play")
 
-    main_timer = ui.timer(REFRESH_INTERVAL, tick)
-    tick(1,tick,once=True)  # inicijalni tick odgođen za 1 secundu
+    ui.timer(REFRESH_INTERVAL, tick)
+    ui.timer(1,tick,once=True)  # inicijalni tick odgođen za 1 secundu
 
 
 # ------------------ MOBILE CSS FIXES ------------------
