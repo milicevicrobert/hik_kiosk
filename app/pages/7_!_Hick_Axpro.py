@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 
 try:
-    from axpro.axpro_auth import (
+    from module.axpro_auth import (
         login_axpro,
         get_zone_status,
         clear_axpro_alarms,
@@ -13,7 +13,7 @@ try:
         USERNAME,
         PASSWORD,
     )
-    from axpro.ax_config import DB_PATH
+    from module.config import DB_PATH
 
     AXPRO_AVAILABLE = True
 except ImportError as e:

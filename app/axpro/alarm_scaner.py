@@ -22,23 +22,29 @@ import sqlite3
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from ax_config import DB_PATH
-from axpro_auth import login_axpro, get_zone_status, clear_axpro_alarms
+from module.config import DB_PATH
+from module.axpro_auth import (
+    login_axpro,
+    get_zone_status,
+    clear_axpro_alarms,
+    HOST,
+    USERNAME,
+)
 
 # ------------------ KONFIG ------------------
 
 TIME_FMT = "%Y-%m-%d %H:%M:%S"
 
-POLL_IDLE_SEC = 10          # osnovni poll
-POLL_ACTIVE_SEC = 10        # može ostati 10s (želiš štedjeti mrežu)
-BURST_POLLS = 3             # broj brzih polla nakon promjene
-BURST_SLEEP_SEC = 0.5       # razmak u burstu
+POLL_IDLE_SEC = 10  # osnovni poll
+POLL_ACTIVE_SEC = 10  # može ostati 10s (želiš štedjeti mrežu)
+BURST_POLLS = 3  # broj brzih polla nakon promjene
+BURST_SLEEP_SEC = 0.5  # razmak u burstu
 
 LOGIN_MAX_ATTEMPTS = 5
 LOGIN_RETRY_SLEEP_SEC = 5
 LOGIN_COOLDOWN_AFTER_MAX = 30
 
-BUSY_TIMEOUT_MS = 3000      # SQLite busy timeout
+BUSY_TIMEOUT_MS = 3000  # SQLite busy timeout
 HEARTBEAT_KEY = "scanner_heartbeat"
 RESET_FLAG_KEY = "resetAlarm"
 
@@ -48,6 +54,7 @@ JITTER_ACTIVE_SEC = 0.2
 
 
 # ------------------ DB POMOĆNE ------------------
+
 
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
@@ -85,13 +92,14 @@ def set_heartbeat() -> None:
 
 # ------------------ ZONE AŽURIRANJE ------------------
 
+
 def _now_str() -> str:
     return datetime.now().strftime(TIME_FMT)
 
 
-def upsert_zone_state(zone_id: int,
-                      zone_name: str,
-                      alarm_active: bool) -> Tuple[bool, bool]:
+def upsert_zone_state(
+    zone_id: int, zone_name: str, alarm_active: bool
+) -> Tuple[bool, bool]:
     """
     Upsert zone:
     - Ako je prijelaz 0->1: postavi alarm_status=1, last_updated=now i last_alarm_time=now.
@@ -172,6 +180,7 @@ def upsert_zone_state(zone_id: int,
 
 # ------------------ AX PRO POMOĆNE ------------------
 
+
 def do_login_with_retries() -> Optional[Any]:
     attempts = 0
     while True:
@@ -199,15 +208,18 @@ def poll_zones(cookie: Any) -> List[Dict[str, Any]]:
     for entry in zones:
         z = entry.get("Zone", {})
         # očekuje se da axpro_auth već normalizira polja
-        out.append({
-            "id": int(z.get("id")),
-            "name": str(z.get("name", "")),
-            "alarm": bool(z.get("alarm", False)),
-        })
+        out.append(
+            {
+                "id": int(z.get("id")),
+                "name": str(z.get("name", "")),
+                "alarm": bool(z.get("alarm", False)),
+            }
+        )
     return out
 
 
 # ------------------ RESET OBRADA ------------------
+
 
 def process_reset_if_requested(cookie: Any) -> bool:
     """
@@ -231,6 +243,7 @@ def process_reset_if_requested(cookie: Any) -> bool:
 
 
 # ------------------ GLAVNA PETLJA ------------------
+
 
 def run_scanner() -> None:
     if not os.path.exists(DB_PATH):
@@ -284,8 +297,10 @@ def run_scanner() -> None:
                 # odredi interval (po tvojoj želji oba su 10s)
                 interval = POLL_ACTIVE_SEC if any_active else POLL_IDLE_SEC
                 # jitter
-                interval += random.uniform(-JITTER_ACTIVE_SEC if any_active else -JITTER_IDLE_SEC,
-                                           JITTER_ACTIVE_SEC if any_active else JITTER_IDLE_SEC)
+                interval += random.uniform(
+                    -JITTER_ACTIVE_SEC if any_active else -JITTER_IDLE_SEC,
+                    JITTER_ACTIVE_SEC if any_active else JITTER_IDLE_SEC,
+                )
                 if interval < 0.2:
                     interval = 0.2
 
@@ -316,12 +331,10 @@ def _do_burst(cookie: Any) -> None:
 if __name__ == "__main__":
     try:
         print("=" * 42)
-        from axpro_auth import HOST, USERNAME  # samo za info ispisa
         print(f"📡 AX PRO: {HOST} (user: {USERNAME})")
         print("=" * 42)
     except Exception:
         pass
-
     try:
         run_scanner()
     except KeyboardInterrupt:
