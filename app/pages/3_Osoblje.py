@@ -1,7 +1,7 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
-from admin_config import DB_PATH
+from admin import DB_PATH
 
 st.set_page_config(page_title="Osoblje", layout="centered")
 st.markdown("""

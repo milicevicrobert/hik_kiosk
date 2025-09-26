@@ -3,7 +3,7 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import datetime
-from admin_config import DB_PATH
+from admin import DB_PATH
 import time
 
 # ------------------ Postavke sučelja ------------------

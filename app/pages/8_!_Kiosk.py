@@ -4,8 +4,8 @@ import pandas as pd
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 from static.alarm_base64 import base64_mp3
+from admin import DB_PATH
 
-DB_PATH = "data/alarmni_sustav.db"
 
 # ------------------ Konfiguracija ------------------
 st.set_page_config(

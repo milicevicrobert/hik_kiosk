@@ -1,6 +1,6 @@
 import sqlite3
 import streamlit as st
-from module.config import DB_PATH
+from admin import DB_PATH
 import pandas as pd
 from datetime import datetime
 from module.axpro_auth import (

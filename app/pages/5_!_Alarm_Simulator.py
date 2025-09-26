@@ -3,7 +3,7 @@ import sqlite3
 import pandas as pd
 import random
 from datetime import datetime, date, timedelta
-from admin_config import DB_PATH
+from admin import DB_PATH
 
 st.set_page_config(
     page_title="Alarm Simulator",

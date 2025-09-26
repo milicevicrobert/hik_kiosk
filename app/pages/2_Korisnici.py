@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from admin_config import DB_PATH
+from admin import DB_PATH
 
 # Page configuration
 st.set_page_config(page_title="Korisnici", page_icon="👥", layout="wide")
@@ -19,9 +19,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("👥 Upravljanje Korisnicima")
-st.caption("Dodjeljivanje narukvica korisnicima i upravljanje korisnicima")
-
+st.subheader("👥 Upravljanje Korisnicima")
 
 # Database functions
 def get_korisnici_data():

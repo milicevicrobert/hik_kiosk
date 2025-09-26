@@ -13,7 +13,7 @@ try:
         USERNAME,
         PASSWORD,
     )
-    from module.config import DB_PATH
+    from admin import DB_PATH
 
     AXPRO_AVAILABLE = True
 except ImportError as e:

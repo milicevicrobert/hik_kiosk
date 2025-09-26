@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
-from admin_config import DB_PATH
+from admin import DB_PATH
 
 # ====================== PAGE CONFIG & STYLES ======================
 st.set_page_config(
