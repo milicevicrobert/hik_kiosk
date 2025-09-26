@@ -7,7 +7,7 @@ from datetime import datetime
 # ------------------ CONFIG ------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "data", "alarmni_sustav.db")
-SOUND_FILE = os.path.join(BASE_DIR, "static", "test_alarm.mp3")
+SOUND_FILE = os.path.join(BASE_DIR, "static", "alarm_3_short.wav")
 
 PIN = int(4)  # broj znamenki PIN-a
 TIME_FMT = "%Y-%m-%d %H:%M:%S"
