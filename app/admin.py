@@ -5,7 +5,6 @@ import pandas as pd
 from datetime import datetime
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
 DB_PATH = os.path.join(BASE_DIR,"data", "alarmni_sustav.db")
 
 # PRIMJER KORIŠTENJA:
@@ -18,7 +17,8 @@ STAVKE = [
     "data",
     "pages",
     "module/axpro_auth.py", 
-    "data/alarmni_sustav.db",]
+    "data/alarmni_sustav.db",
+    "static"]
 
 # -------------- Help functions --------------
 
@@ -59,21 +59,34 @@ st.markdown(
 
 
 # System health monitoring
-st.subheader("🔍 System Health")
-st.markdown("---")
-rezultati = provjeri_postojanje(MAPA, STAVKE)
+st.markdown("<span style='font-size:1.5em;'>🔍 <b>System Health</b></span>", unsafe_allow_html=True)
 
+st.markdown("---")
+
+st.markdown(f"""
+**📁 BASE_DIR:**  <code>{BASE_DIR}</code>
+
+**🗄️ DB_PATH:**  <code>{DB_PATH}</code>
+""", unsafe_allow_html=True)
+
+st.markdown("---")
+
+rezultati = provjeri_postojanje(MAPA, STAVKE)
 cols = st.columns(3)  # 3 kolone
 
 for idx, (ime, tip, postoji) in enumerate(rezultati):
     col = cols[idx % 3]
-    col.write(f"{ime}: {'✅' if postoji else '❌'} ({tip})")
-
+    ikona = "✅" if postoji else "❌"
+    tip_ikona = "📁" if tip == "direktorij" else ("📄" if tip == "datoteka" else "❓")
+    boja = "grey" if postoji else "red"
+    col.markdown(
+        f"<span style='font-size:1em; color:{boja};'>{ikona} {tip_ikona} <b>{ime}</b></span><br>",
+        
+        unsafe_allow_html=True,
+    )
 st.markdown("---")
-st.write(f"BASE_DIR: {BASE_DIR}")
-st.write(f"DB_PATH: {DB_PATH}")
-
+# Footer
 st.markdown(
-    "<sub>© Robert M., 2025 – Admin Panel za Alarmni Sustav</sub>",
+    "<sub>© RM., 2025 – Admin Panel za Alarmni Sustav</sub>",
     unsafe_allow_html=True,
 )

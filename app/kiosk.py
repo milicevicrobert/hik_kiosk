@@ -7,12 +7,26 @@ from datetime import datetime
 # ------------------ CONFIG ------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "data", "alarmni_sustav.db")
-SOUND_FILE = os.path.join(BASE_DIR, "static", "alarm_3_short.wav")
-
 PIN = int(4)  # broj znamenki PIN-a
+REFRESH_INTERVAL = 5  # sekunde između osvježavanja aktivnih alarma
 TIME_FMT = "%Y-%m-%d %H:%M:%S"
-REFRESH_INTERVAL = 5  # sekunde između osvježavanja liste aktivnih alarma
 
+#------------------ SOUND FILE ------------------
+def get_config_value(key: str, default=None):
+    """Vrati vrijednost iz tablice config za zadani ključ ili default ako ne postoji."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM comm WHERE key = ?", (key,))
+            row = cur.fetchone()
+            if row and row[0]:
+                return row[0]
+    except Exception:
+        pass
+    return default
+
+s_file = get_config_value("sound_file", os.path.join(BASE_DIR, "static", "alarm_3_short.wav"))
+SOUND_FILE=os.path.join(BASE_DIR, "static", s_file)
 
 
 
