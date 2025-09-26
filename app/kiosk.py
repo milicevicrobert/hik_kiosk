@@ -81,7 +81,7 @@ def get_zadnji_potvrdjeni_alarm_korisnika(korisnik: str) -> dict | None:
 
 
 def get_aktivni_alarmi() -> list[dict]:
-    """Upiši ud db.alarms sve aktivne (potvrda=0) i vrati ih kao listu dict-ova."""
+    """isčitaj iz db.alarms sve aktivne (potvrda=0) i vrati ih kao listu dict-ova."""
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
@@ -96,8 +96,9 @@ def get_aktivni_alarmi() -> list[dict]:
 
 
 def check_and_create_alarm_df(DB_PATH: str) -> None:
-    """Provjeri i kreiraj tablicu db.alarms ako ne postoji.
-    Također kreira index na zone_id za brže pretrage."""
+    """Očitaj sve zone iz db.zone i pripadajuće korisnike
+    i za one koje su u alarm_status=1, a nemaju aktivan alarm u db.alarms
+    (potvrda=0), dodaj novi red u db.alarms."""
     now_txt = datetime.now().strftime(TIME_FMT)
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
@@ -319,6 +320,7 @@ def main_page():
         time_lbl = ui.label("").classes("bg-gray-800 rounded-lg px-3 py-1")
 
         def _upd_time():
+            """Ažuriraj vrijeme u headeru."""
             now = datetime.now()
             safe_ui(
                 setattr,
@@ -333,6 +335,7 @@ def main_page():
         ui.label("🔔 AKTIVNI ALARMI - DOM BUZIN").classes(
             "bg-gray-800 rounded-lg px-3 py-1"
         )
+
         def pause_sound():
             nonlocal sound_playing, sound_paused_by_user
             control_sound("pause")
@@ -380,20 +383,25 @@ def main_page():
         if not rows:
             safe_ui(container.clear)
             render_empty()
-            control_sound("pause")
-            sound_playing = False
+            if sound_playing:
+                control_sound("pause")
+                sound_playing = False
             last_alarm_ids = set()
             sound_paused_by_user = False  # resetiraj kad nema alarma
             return
 
         # ima aktivnih alarma
-        current_ids =  {r["id"] for r in rows}
+
+        current_ids = {r["id"] for r in rows}
+        novi_alarm = not current_ids.issubset(last_alarm_ids)  # True ako postoji novi alarm
+
         if current_ids != last_alarm_ids:
             safe_ui(container.clear)
             for r in rows:
                 prikazi_alarm(r, container, tick)
             last_alarm_ids = current_ids
-            sound_paused_by_user = False  # resetiraj pauzu kad dođe novi alarm
+            if novi_alarm:
+                sound_paused_by_user = False  # resetiraj pauzu SAMO ako je došao novi alarm  # resetiraj pauzu kad dođe novi alarm
 
 
         if current_ids and not sound_paused_by_user:
