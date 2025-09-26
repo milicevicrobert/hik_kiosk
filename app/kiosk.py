@@ -380,9 +380,8 @@ def main_page():
         if not rows:
             safe_ui(container.clear)
             render_empty()
-            if sound_playing:
-                control_sound("pause")
-                sound_playing = False
+            control_sound("pause")
+            sound_playing = False
             last_alarm_ids = set()
             sound_paused_by_user = False  # resetiraj kad nema alarma
             return
@@ -398,9 +397,8 @@ def main_page():
 
 
         if current_ids and not sound_paused_by_user:
-            if not sound_playing:
-                control_sound("play")
-                sound_playing = True
+            control_sound("play")
+            sound_playing = True
         else:
             if sound_playing:
                 control_sound("pause")
